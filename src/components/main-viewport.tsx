@@ -15,11 +15,14 @@ import {
   Mesh,
   ArcRotateCamera,
   ActionManager,
-  ExecuteCodeAction
+  ExecuteCodeAction,
+  GizmoManager,
+  PlaneRotationGizmo,
+  UtilityLayerRenderer
 } from '@babylonjs/core';
 import { v4 as uuidv4 } from 'uuid';
 import { useRoofBuilder, Building } from '../store/RoofBuilderContext';
-import { createBuildingMesh, createControlPointsMesh } from '../utils/buildingMeshes';
+import { createBuildingMesh } from '../utils/buildingMeshes';
 
 const MainViewport = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -40,11 +43,13 @@ const MainViewport = () => {
 
   // Track meshes
   const buildingMeshesRef = useRef<Map<string, Mesh>>(new Map());
-  const controlPointsRef = useRef<Map<string, Mesh[]>>(new Map());
   const ghostBuildingRef = useRef<Mesh | null>(null);
-  const selectedControlPoint = useRef<{ buildingId: string, controlType: string } | null>(null);
-  const pointerStartPosition = useRef<{ x: number, z: number } | null>(null);
-  const buildingStartData = useRef<Building | null>(null);
+  const gizmoManagerRef = useRef<GizmoManager | null>(null);
+  const currentGizmoMode = useRef<'translate' | 'rotate' | 'scale' | null>(null);
+
+  // Add refs for direct gizmo access
+  const planeRotationGizmoRef = useRef<PlaneRotationGizmo | null>(null);
+  const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -97,7 +102,42 @@ const MainViewport = () => {
 
     console.log("Ground created with name:", ground.name);
 
-    // Handle pointer events for placement and control point interactions
+    // Initialize Gizmo Manager for transforming buildings
+    const gizmoManager = new GizmoManager(scene);
+    gizmoManager.positionGizmoEnabled = false;
+    gizmoManager.rotationGizmoEnabled = false;
+    gizmoManager.scaleGizmoEnabled = false;
+    gizmoManager.usePointerToAttachGizmos = false;
+
+    // Configure gizmos to work on XZ plane
+    if (gizmoManager.gizmos.positionGizmo) {
+      // Restrict position gizmo to XZ plane
+      gizmoManager.gizmos.positionGizmo.xGizmo.dragBehavior.updateDragPlane = false;
+      gizmoManager.gizmos.positionGizmo.zGizmo.dragBehavior.updateDragPlane = false;
+      gizmoManager.gizmos.positionGizmo.yGizmo.isEnabled = false; // Disable Y-axis movement
+    }
+
+    // For rotation, we'll use a PlaneRotationGizmo instead of the default RotationGizmo
+    // We'll implement this when enableRotateGizmo is called
+    if (gizmoManager.gizmos.rotationGizmo) {
+      // Disable the standard rotation gizmo entirely - we'll use our custom one instead
+      gizmoManager.gizmos.rotationGizmo.xGizmo.isEnabled = false;
+      gizmoManager.gizmos.rotationGizmo.yGizmo.isEnabled = false;
+      gizmoManager.gizmos.rotationGizmo.zGizmo.isEnabled = false;
+    }
+
+    // Create utility layer for our custom gizmos
+    const utilityLayer = new UtilityLayerRenderer(scene);
+    utilityLayerRef.current = utilityLayer;
+
+    if (gizmoManager.gizmos.scaleGizmo) {
+      // Restrict scaling to XZ plane
+      gizmoManager.gizmos.scaleGizmo.yGizmo.isEnabled = false; // Disable Y-axis scaling
+    }
+
+    gizmoManagerRef.current = gizmoManager;
+
+    // Handle pointer events for placement and selection
     scene.onPointerObservable.add((pointerInfo) => {
       console.log("Pointer event type:", pointerInfo.type);
 
@@ -117,8 +157,6 @@ const MainViewport = () => {
           ghostBuildingEnabled: ghostBuildingRef.current?.isEnabled()
         });
         handlePointerDown(pickResult);
-      } else if (pointerInfo.type === PointerEventTypes.POINTERUP) {
-        handlePointerUp();
       }
     });
 
@@ -167,27 +205,32 @@ const MainViewport = () => {
     // Cleanup
     return () => {
       window.removeEventListener('resize', resizeHandler);
+
+      // Clean up custom gizmos
+      if (planeRotationGizmoRef.current) {
+        planeRotationGizmoRef.current.dispose();
+        planeRotationGizmoRef.current = null;
+      }
+
       engine.dispose();
     };
   }, []);
 
   // Update scene when buildings change
   useEffect(() => {
-    if (!sceneRef.current) return;
+    if (!sceneRef.current || !gizmoManagerRef.current) return;
 
     console.log("Buildings updated:", buildings);
     console.log("Selected building ID:", selectedBuildingId);
 
-    // Clear existing building meshes and control points
+    // Clear existing building meshes
     buildingMeshesRef.current.forEach((mesh) => {
       mesh.dispose();
     });
     buildingMeshesRef.current.clear();
 
-    controlPointsRef.current.forEach((points) => {
-      points.forEach((point) => point.dispose());
-    });
-    controlPointsRef.current.clear();
+    // Detach gizmo from any previously selected mesh
+    gizmoManagerRef.current.attachToMesh(null);
 
     // Create meshes for each building
     buildings.forEach((building) => {
@@ -201,11 +244,19 @@ const MainViewport = () => {
         child.isPickable = true;
       });
 
-      // Add control points if this is the selected building
+      // Attach gizmo to the selected building
       if (building.id === selectedBuildingId) {
-        console.log("Creating control points for selected building:", building.id);
-        const controlPoints = createControlPointsMesh(sceneRef.current!, building);
-        controlPointsRef.current.set(building.id, controlPoints);
+        console.log("Attaching gizmos to selected building:", building.id);
+        gizmoManagerRef.current!.attachToMesh(buildingMesh);
+
+        // Apply current gizmo mode if one is set
+        if (currentGizmoMode.current === 'translate') {
+          enableTranslateGizmo();
+        } else if (currentGizmoMode.current === 'rotate') {
+          enableRotateGizmo();
+        } else if (currentGizmoMode.current === 'scale') {
+          enableScaleGizmo();
+        }
       }
     });
   }, [buildings, selectedBuildingId]);
@@ -261,76 +312,6 @@ const MainViewport = () => {
       ghostBuildingRef.current.position.x = pickResult.pickedPoint!.x;
       ghostBuildingRef.current.position.z = pickResult.pickedPoint!.z;
     }
-
-    // Handle control point dragging
-    if (selectedControlPoint.current && pointerStartPosition.current && buildingStartData.current) {
-      console.log("Dragging control point:", selectedControlPoint.current.controlType);
-
-      const { buildingId, controlType } = selectedControlPoint.current;
-      const building = buildings.find(b => b.id === buildingId);
-
-      if (building && pickResult.hit && pickResult.pickedPoint) {
-        const currentPosition = {
-          x: pickResult.pickedPoint.x,
-          z: pickResult.pickedPoint.z
-        };
-
-        // Calculate delta in world space
-        const dx = currentPosition.x - pointerStartPosition.current.x;
-        const dz = currentPosition.z - pointerStartPosition.current.z;
-
-        console.log("Drag delta:", { dx, dz });
-
-        // Transform based on control point type
-        const updatedBuilding = { ...building };
-
-        switch (controlType) {
-          case 'topLeft':
-            updatedBuilding.width = Math.max(1, buildingStartData.current.width - dx * 2);
-            updatedBuilding.length = Math.max(1, buildingStartData.current.length - dz * 2);
-            updatedBuilding.position.x = buildingStartData.current.position.x + dx;
-            updatedBuilding.position.z = buildingStartData.current.position.z + dz;
-            break;
-          case 'topRight':
-            updatedBuilding.width = Math.max(1, buildingStartData.current.width + dx * 2);
-            updatedBuilding.length = Math.max(1, buildingStartData.current.length - dz * 2);
-            updatedBuilding.position.x = buildingStartData.current.position.x + dx;
-            updatedBuilding.position.z = buildingStartData.current.position.z + dz;
-            break;
-          case 'bottomLeft':
-            updatedBuilding.width = Math.max(1, buildingStartData.current.width - dx * 2);
-            updatedBuilding.length = Math.max(1, buildingStartData.current.length + dz * 2);
-            updatedBuilding.position.x = buildingStartData.current.position.x + dx;
-            updatedBuilding.position.z = buildingStartData.current.position.z + dz;
-            break;
-          case 'bottomRight':
-            updatedBuilding.width = Math.max(1, buildingStartData.current.width + dx * 2);
-            updatedBuilding.length = Math.max(1, buildingStartData.current.length + dz * 2);
-            updatedBuilding.position.x = buildingStartData.current.position.x + dx;
-            updatedBuilding.position.z = buildingStartData.current.position.z + dz;
-            break;
-          case 'midTop':
-            updatedBuilding.length = Math.max(1, buildingStartData.current.length - dz * 2);
-            updatedBuilding.position.z = buildingStartData.current.position.z + dz;
-            break;
-          case 'midRight':
-            updatedBuilding.width = Math.max(1, buildingStartData.current.width + dx * 2);
-            break;
-          case 'midBottom':
-            updatedBuilding.length = Math.max(1, buildingStartData.current.length + dz * 2);
-            break;
-          case 'midLeft':
-            updatedBuilding.width = Math.max(1, buildingStartData.current.width - dx * 2);
-            updatedBuilding.position.x = buildingStartData.current.position.x + dx;
-            break;
-        }
-
-        console.log("Updated building:", updatedBuilding);
-
-        // Update the building in state
-        updateBuilding(buildingId, updatedBuilding);
-      }
-    }
   };
 
   // Handle pointer down event
@@ -368,32 +349,10 @@ const MainViewport = () => {
       setPlacementMode(false);
     }
 
-    // Select a building or control point
+    // Select a building
     if (!placementMode && pickResult.hit && pickResult.pickedMesh) {
-      // Check if we're clicking on a control point
-      if (pickResult.pickedMesh.name.startsWith('control-') && pickResult.pickedMesh.metadata) {
-        console.log("Control point clicked:", pickResult.pickedMesh.name, pickResult.pickedMesh.metadata);
-
-        const metadata = pickResult.pickedMesh.metadata;
-        selectedControlPoint.current = {
-          buildingId: metadata.buildingId,
-          controlType: metadata.controlType
-        };
-
-        pointerStartPosition.current = {
-          x: pickResult.pickedPoint!.x,
-          z: pickResult.pickedPoint!.z
-        };
-
-        // Store the initial building data for reference during dragging
-        const selectedBuilding = buildings.find(b => b.id === metadata.buildingId);
-        if (selectedBuilding) {
-          buildingStartData.current = { ...selectedBuilding };
-          console.log("Stored initial building data:", buildingStartData.current);
-        }
-      }
       // Check if we're clicking on a building
-      else if (pickResult.pickedMesh.name.startsWith('building-') ||
+      if (pickResult.pickedMesh.name.startsWith('building-') ||
         pickResult.pickedMesh.parent?.name?.startsWith('building-parent-')) {
         const meshId = pickResult.pickedMesh.name.startsWith('building-') 
           ? pickResult.pickedMesh.name.substring('building-'.length)
@@ -410,53 +369,132 @@ const MainViewport = () => {
     }
   };
 
-  // Handle pointer up event
-  const handlePointerUp = () => {
-    selectedControlPoint.current = null;
-    pointerStartPosition.current = null;
-    buildingStartData.current = null;
+  // Function to sync mesh transforms with building data
+  const syncMeshWithBuilding = () => {
+    if (!selectedBuildingId || !gizmoManagerRef.current) return;
+
+    const buildingMesh = buildingMeshesRef.current.get(selectedBuildingId);
+    if (!buildingMesh) return;
+
+    const building = buildings.find(b => b.id === selectedBuildingId);
+    if (!building) return;
+
+    // Update building data based on mesh position
+    const updatedBuilding: Partial<Building> = {
+      position: {
+        x: buildingMesh.position.x,
+        z: buildingMesh.position.z
+      },
+      rotation: buildingMesh.rotation.y,
+    };
+
+    // For scaling, we need to handle differently based on mesh type
+    // This is simplified, you might need to adjust based on your mesh structure
+    if (buildingMesh.scaling) {
+      updatedBuilding.width = building.width * buildingMesh.scaling.x;
+      updatedBuilding.length = building.length * buildingMesh.scaling.z;
+    }
+
+    updateBuilding(selectedBuildingId, updatedBuilding);
   };
 
-  // Handle keyboard events for rotation
-  useEffect(() => {
-    if (!selectedBuildingId) return;
+  // Enable translation gizmo
+  const enableTranslateGizmo = () => {
+    if (!gizmoManagerRef.current) return;
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!selectedBuildingId) return;
+    // Disable all gizmos first
+    gizmoManagerRef.current.positionGizmoEnabled = false;
+    gizmoManagerRef.current.rotationGizmoEnabled = false;
+    gizmoManagerRef.current.scaleGizmoEnabled = false;
 
-      const selectedBuilding = buildings.find(b => b.id === selectedBuildingId);
-      if (!selectedBuilding) return;
+    // Enable position gizmo
+    gizmoManagerRef.current.positionGizmoEnabled = true;
 
-      console.log("Key pressed:", e.key);
-
-      const rotationStep = Math.PI / 16; // 11.25 degrees
-      let newRotation = selectedBuilding.rotation;
-
-      if (e.key === 'r' || e.key === 'R') {
-        // Rotate clockwise
-        newRotation += rotationStep;
-      } else if (e.key === 'e' || e.key === 'E') {
-        // Rotate counter-clockwise
-        newRotation -= rotationStep;
-      } else {
-        return; // Not a rotation key
+    // Set up observers for transformation changes
+    if (gizmoManagerRef.current.gizmos.positionGizmo) {
+      // Remove any existing observers
+      if (gizmoManagerRef.current.gizmos.positionGizmo.onDragEndObservable.hasObservers()) {
+        gizmoManagerRef.current.gizmos.positionGizmo.onDragEndObservable.clear();
       }
 
-      // Normalize rotation to keep it between 0 and 2*PI
-      newRotation = (newRotation + 2 * Math.PI) % (2 * Math.PI);
+      // Add new observer
+      gizmoManagerRef.current.gizmos.positionGizmo.onDragEndObservable.add(() => {
+        syncMeshWithBuilding();
+      });
+    }
 
-      console.log("Rotating building to:", newRotation);
-      updateBuilding(selectedBuildingId, { rotation: newRotation });
-    };
+    currentGizmoMode.current = 'translate';
+  };
 
-    window.addEventListener('keydown', handleKeyDown);
+  // Enable rotation gizmo - replace with a Y-axis-only rotation gizmo
+  const enableRotateGizmo = () => {
+    if (!gizmoManagerRef.current || !utilityLayerRef.current) return;
 
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [selectedBuildingId, buildings, updateBuilding]);
+    // Disable all existing gizmos first
+    gizmoManagerRef.current.positionGizmoEnabled = false;
+    gizmoManagerRef.current.rotationGizmoEnabled = false;
+    gizmoManagerRef.current.scaleGizmoEnabled = false;
 
-  // Render info about key controls
+    // Clean up any existing plane rotation gizmo
+    if (planeRotationGizmoRef.current) {
+      planeRotationGizmoRef.current.dispose();
+    }
+
+    // Get the selected mesh
+    if (!selectedBuildingId) return;
+    const buildingMesh = buildingMeshesRef.current.get(selectedBuildingId);
+    if (!buildingMesh) return;
+
+    // Create a new PlaneRotationGizmo that only rotates around the Y-axis
+    const planeRotationGizmo = new PlaneRotationGizmo(
+      new Vector3(0, 1, 0), // Y-axis normal vector
+      new Color3(0, 1, 0),  // Green color
+      utilityLayerRef.current
+    );
+
+    // Attach to the selected mesh
+    planeRotationGizmo.attachedMesh = buildingMesh;
+
+    // Store the gizmo for later cleanup
+    planeRotationGizmoRef.current = planeRotationGizmo;
+
+    // Add observer for drag end
+    planeRotationGizmo.dragBehavior.onDragEndObservable.add(() => {
+      syncMeshWithBuilding();
+    });
+
+    currentGizmoMode.current = 'rotate';
+  };
+
+  // Enable scale gizmo
+  const enableScaleGizmo = () => {
+    if (!gizmoManagerRef.current) return;
+
+    // Disable all gizmos first
+    gizmoManagerRef.current.positionGizmoEnabled = false;
+    gizmoManagerRef.current.rotationGizmoEnabled = false;
+    gizmoManagerRef.current.scaleGizmoEnabled = false;
+
+    // Enable scale gizmo
+    gizmoManagerRef.current.scaleGizmoEnabled = true;
+
+    // Set up observers for transformation changes
+    if (gizmoManagerRef.current.gizmos.scaleGizmo) {
+      // Remove any existing observers
+      if (gizmoManagerRef.current.gizmos.scaleGizmo.onDragEndObservable.hasObservers()) {
+        gizmoManagerRef.current.gizmos.scaleGizmo.onDragEndObservable.clear();
+      }
+
+      // Add new observer
+      gizmoManagerRef.current.gizmos.scaleGizmo.onDragEndObservable.add(() => {
+        syncMeshWithBuilding();
+      });
+    }
+
+    currentGizmoMode.current = 'scale';
+  };
+
+  // Render info about key controls and gizmo buttons
   const renderControlsInfo = () => {
     return (
       <div style={{
@@ -471,6 +509,7 @@ const MainViewport = () => {
       }}>
         <div>Press <b>E</b> to rotate counter-clockwise</div>
         <div>Press <b>R</b> to rotate clockwise</div>
+        <div>Use gizmo controls for direct manipulation</div>
       </div>
     );
   };
@@ -524,6 +563,55 @@ const MainViewport = () => {
           Dual Pitch Roof
         </button>
       </div>
+
+      {selectedBuildingId && (
+        <div style={{
+          marginBottom: '0.5rem',
+          display: 'flex',
+          gap: '0.5rem'
+        }}>
+          <button
+            onClick={enableTranslateGizmo}
+            style={{
+              padding: '0.5rem 1rem',
+              backgroundColor: currentGizmoMode.current === 'translate' ? '#2196f3' : '#e0e0e0',
+              color: currentGizmoMode.current === 'translate' ? 'white' : 'black',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+            }}
+          >
+            Move
+          </button>
+          <button
+            onClick={enableRotateGizmo}
+            style={{
+              padding: '0.5rem 1rem',
+              backgroundColor: currentGizmoMode.current === 'rotate' ? '#2196f3' : '#e0e0e0',
+              color: currentGizmoMode.current === 'rotate' ? 'white' : 'black',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+            }}
+          >
+            Rotate
+          </button>
+          <button
+            onClick={enableScaleGizmo}
+            style={{
+              padding: '0.5rem 1rem',
+              backgroundColor: currentGizmoMode.current === 'scale' ? '#2196f3' : '#e0e0e0',
+              color: currentGizmoMode.current === 'scale' ? 'white' : 'black',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+            }}
+          >
+            Scale
+          </button>
+        </div>
+      )}
+
       <div style={{ flex: 1, position: 'relative' }}>
         <canvas
           ref={canvasRef}
