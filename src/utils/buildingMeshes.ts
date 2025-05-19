@@ -149,6 +149,8 @@ export const createControlPointsMesh = (scene: Scene, building: Building): Mesh[
   const size = 0.3;
   const yPos = 0.1; // Just above ground level
 
+  console.log("Creating control points for building:", building.id, building);
+
   // Corner control points
   const cornerPositions = [
     { x: -building.width / 2, z: -building.length / 2, id: 'topLeft' },
@@ -178,18 +180,26 @@ export const createControlPointsMesh = (scene: Scene, building: Building): Mesh[
     point.material = material;
 
     // Position in world space
+    const rotatedX = Math.cos(building.rotation) * pos.x - Math.sin(building.rotation) * pos.z;
+    const rotatedZ = Math.sin(building.rotation) * pos.x + Math.cos(building.rotation) * pos.z;
+
     const worldPos = new Vector3(
-      building.position.x + Math.cos(building.rotation) * pos.x - Math.sin(building.rotation) * pos.z,
+      building.position.x + rotatedX,
       yPos,
-      building.position.z + Math.sin(building.rotation) * pos.x + Math.cos(building.rotation) * pos.z
+      building.position.z + rotatedZ
     );
     point.position = worldPos;
+
+    console.log(`Control point ${pos.id} position:`, worldPos);
 
     // Store metadata
     point.metadata = {
       buildingId: building.id,
       controlType: pos.id,
     };
+
+    // Make control points pickable
+    point.isPickable = true;
 
     controlPoints.push(point);
   });
@@ -207,18 +217,26 @@ export const createControlPointsMesh = (scene: Scene, building: Building): Mesh[
     point.material = material;
 
     // Position in world space
+    const rotatedX = Math.cos(building.rotation) * pos.x - Math.sin(building.rotation) * pos.z;
+    const rotatedZ = Math.sin(building.rotation) * pos.x + Math.cos(building.rotation) * pos.z;
+
     const worldPos = new Vector3(
-      building.position.x + Math.cos(building.rotation) * pos.x - Math.sin(building.rotation) * pos.z,
+      building.position.x + rotatedX,
       yPos,
-      building.position.z + Math.sin(building.rotation) * pos.x + Math.cos(building.rotation) * pos.z
+      building.position.z + rotatedZ
     );
     point.position = worldPos;
+
+    console.log(`Control point ${pos.id} position:`, worldPos);
 
     // Store metadata
     point.metadata = {
       buildingId: building.id,
       controlType: pos.id,
     };
+
+    // Make control points pickable
+    point.isPickable = true;
 
     controlPoints.push(point);
   });

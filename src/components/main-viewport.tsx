@@ -175,6 +175,9 @@ const MainViewport = () => {
   useEffect(() => {
     if (!sceneRef.current) return;
 
+    console.log("Buildings updated:", buildings);
+    console.log("Selected building ID:", selectedBuildingId);
+
     // Clear existing building meshes and control points
     buildingMeshesRef.current.forEach((mesh) => {
       mesh.dispose();
@@ -188,11 +191,19 @@ const MainViewport = () => {
 
     // Create meshes for each building
     buildings.forEach((building) => {
+      // Create the building mesh
       const buildingMesh = createBuildingMesh(sceneRef.current!, building);
       buildingMeshesRef.current.set(building.id, buildingMesh);
 
+      // Make building mesh pickable
+      buildingMesh.isPickable = true;
+      buildingMesh.getChildMeshes().forEach(child => {
+        child.isPickable = true;
+      });
+
       // Add control points if this is the selected building
       if (building.id === selectedBuildingId) {
+        console.log("Creating control points for selected building:", building.id);
         const controlPoints = createControlPointsMesh(sceneRef.current!, building);
         controlPointsRef.current.set(building.id, controlPoints);
       }
@@ -202,6 +213,8 @@ const MainViewport = () => {
   // Update ghost building for placement mode
   useEffect(() => {
     if (!sceneRef.current) return;
+
+    console.log("Placement mode updated:", { placementMode, currentRoofType });
 
     // Dispose of existing ghost building
     if (ghostBuildingRef.current) {
@@ -251,6 +264,8 @@ const MainViewport = () => {
 
     // Handle control point dragging
     if (selectedControlPoint.current && pointerStartPosition.current && buildingStartData.current) {
+      console.log("Dragging control point:", selectedControlPoint.current.controlType);
+
       const { buildingId, controlType } = selectedControlPoint.current;
       const building = buildings.find(b => b.id === buildingId);
 
@@ -264,54 +279,55 @@ const MainViewport = () => {
         const dx = currentPosition.x - pointerStartPosition.current.x;
         const dz = currentPosition.z - pointerStartPosition.current.z;
 
+        console.log("Drag delta:", { dx, dz });
+
         // Transform based on control point type
         const updatedBuilding = { ...building };
 
         switch (controlType) {
           case 'topLeft':
-            updatedBuilding.width = buildingStartData.current.width - dx * 2;
-            updatedBuilding.length = buildingStartData.current.length - dz * 2;
+            updatedBuilding.width = Math.max(1, buildingStartData.current.width - dx * 2);
+            updatedBuilding.length = Math.max(1, buildingStartData.current.length - dz * 2);
             updatedBuilding.position.x = buildingStartData.current.position.x + dx;
             updatedBuilding.position.z = buildingStartData.current.position.z + dz;
             break;
           case 'topRight':
-            updatedBuilding.width = buildingStartData.current.width + dx * 2;
-            updatedBuilding.length = buildingStartData.current.length - dz * 2;
+            updatedBuilding.width = Math.max(1, buildingStartData.current.width + dx * 2);
+            updatedBuilding.length = Math.max(1, buildingStartData.current.length - dz * 2);
             updatedBuilding.position.x = buildingStartData.current.position.x + dx;
             updatedBuilding.position.z = buildingStartData.current.position.z + dz;
             break;
           case 'bottomLeft':
-            updatedBuilding.width = buildingStartData.current.width - dx * 2;
-            updatedBuilding.length = buildingStartData.current.length + dz * 2;
+            updatedBuilding.width = Math.max(1, buildingStartData.current.width - dx * 2);
+            updatedBuilding.length = Math.max(1, buildingStartData.current.length + dz * 2);
             updatedBuilding.position.x = buildingStartData.current.position.x + dx;
             updatedBuilding.position.z = buildingStartData.current.position.z + dz;
             break;
           case 'bottomRight':
-            updatedBuilding.width = buildingStartData.current.width + dx * 2;
-            updatedBuilding.length = buildingStartData.current.length + dz * 2;
+            updatedBuilding.width = Math.max(1, buildingStartData.current.width + dx * 2);
+            updatedBuilding.length = Math.max(1, buildingStartData.current.length + dz * 2);
             updatedBuilding.position.x = buildingStartData.current.position.x + dx;
             updatedBuilding.position.z = buildingStartData.current.position.z + dz;
             break;
           case 'midTop':
-            updatedBuilding.length = buildingStartData.current.length - dz * 2;
+            updatedBuilding.length = Math.max(1, buildingStartData.current.length - dz * 2);
             updatedBuilding.position.z = buildingStartData.current.position.z + dz;
             break;
           case 'midRight':
-            updatedBuilding.width = buildingStartData.current.width + dx * 2;
+            updatedBuilding.width = Math.max(1, buildingStartData.current.width + dx * 2);
             break;
           case 'midBottom':
-            updatedBuilding.length = buildingStartData.current.length + dz * 2;
+            updatedBuilding.length = Math.max(1, buildingStartData.current.length + dz * 2);
             break;
           case 'midLeft':
-            updatedBuilding.width = buildingStartData.current.width - dx * 2;
+            updatedBuilding.width = Math.max(1, buildingStartData.current.width - dx * 2);
             updatedBuilding.position.x = buildingStartData.current.position.x + dx;
             break;
         }
 
-        // Enforce minimum sizes
-        updatedBuilding.width = Math.max(1, updatedBuilding.width);
-        updatedBuilding.length = Math.max(1, updatedBuilding.length);
+        console.log("Updated building:", updatedBuilding);
 
+        // Update the building in state
         updateBuilding(buildingId, updatedBuilding);
       }
     }
@@ -321,8 +337,17 @@ const MainViewport = () => {
   const handlePointerDown = (pickResult: PickingInfo) => {
     if (!sceneRef.current) return;
 
+    console.log("Pointer down", {
+      placementMode,
+      currentRoofType,
+      hit: pickResult.hit,
+      pickedMeshName: pickResult.pickedMesh?.name
+    });
+
     // Place a building in placement mode
     if (placementMode && currentRoofType && pickResult.hit && pickResult.pickedMesh?.name === 'ground' && ghostBuildingRef.current) {
+      console.log("Adding building", currentRoofType);
+
       const position = {
         x: ghostBuildingRef.current.position.x,
         z: ghostBuildingRef.current.position.z
@@ -343,31 +368,43 @@ const MainViewport = () => {
       setPlacementMode(false);
     }
 
-    // Select a building
+    // Select a building or control point
     if (!placementMode && pickResult.hit && pickResult.pickedMesh) {
       // Check if we're clicking on a control point
       if (pickResult.pickedMesh.name.startsWith('control-') && pickResult.pickedMesh.metadata) {
-        const { buildingId, controlType } = pickResult.pickedMesh.metadata;
-        selectedControlPoint.current = { buildingId, controlType };
+        console.log("Control point clicked:", pickResult.pickedMesh.name, pickResult.pickedMesh.metadata);
+
+        const metadata = pickResult.pickedMesh.metadata;
+        selectedControlPoint.current = {
+          buildingId: metadata.buildingId,
+          controlType: metadata.controlType
+        };
 
         pointerStartPosition.current = {
           x: pickResult.pickedPoint!.x,
           z: pickResult.pickedPoint!.z
         };
 
-        buildingStartData.current = { ...buildings.find(b => b.id === buildingId)! };
+        // Store the initial building data for reference during dragging
+        const selectedBuilding = buildings.find(b => b.id === metadata.buildingId);
+        if (selectedBuilding) {
+          buildingStartData.current = { ...selectedBuilding };
+          console.log("Stored initial building data:", buildingStartData.current);
+        }
       }
       // Check if we're clicking on a building
       else if (pickResult.pickedMesh.name.startsWith('building-') ||
         pickResult.pickedMesh.parent?.name?.startsWith('building-parent-')) {
-        const meshId = pickResult.pickedMesh.name.startsWith('building-')
+        const meshId = pickResult.pickedMesh.name.startsWith('building-') 
           ? pickResult.pickedMesh.name.substring('building-'.length)
           : pickResult.pickedMesh.parent!.name.substring('building-parent-'.length);
 
+        console.log("Building selected:", meshId);
         selectBuilding(meshId);
       }
       // Clicking on empty space deselects
       else if (pickResult.pickedMesh.name === 'ground') {
+        console.log("Deselecting building");
         selectBuilding(null);
       }
     }
@@ -378,6 +415,64 @@ const MainViewport = () => {
     selectedControlPoint.current = null;
     pointerStartPosition.current = null;
     buildingStartData.current = null;
+  };
+
+  // Handle keyboard events for rotation
+  useEffect(() => {
+    if (!selectedBuildingId) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!selectedBuildingId) return;
+
+      const selectedBuilding = buildings.find(b => b.id === selectedBuildingId);
+      if (!selectedBuilding) return;
+
+      console.log("Key pressed:", e.key);
+
+      const rotationStep = Math.PI / 16; // 11.25 degrees
+      let newRotation = selectedBuilding.rotation;
+
+      if (e.key === 'r' || e.key === 'R') {
+        // Rotate clockwise
+        newRotation += rotationStep;
+      } else if (e.key === 'e' || e.key === 'E') {
+        // Rotate counter-clockwise
+        newRotation -= rotationStep;
+      } else {
+        return; // Not a rotation key
+      }
+
+      // Normalize rotation to keep it between 0 and 2*PI
+      newRotation = (newRotation + 2 * Math.PI) % (2 * Math.PI);
+
+      console.log("Rotating building to:", newRotation);
+      updateBuilding(selectedBuildingId, { rotation: newRotation });
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedBuildingId, buildings, updateBuilding]);
+
+  // Render info about key controls
+  const renderControlsInfo = () => {
+    return (
+      <div style={{
+        position: 'absolute',
+        bottom: '10px',
+        right: '10px',
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        color: 'white',
+        padding: '5px 10px',
+        borderRadius: '4px',
+        fontSize: '14px',
+      }}>
+        <div>Press <b>E</b> to rotate counter-clockwise</div>
+        <div>Press <b>R</b> to rotate clockwise</div>
+      </div>
+    );
   };
 
   return (
@@ -472,6 +567,7 @@ const MainViewport = () => {
             Click to place {currentRoofType === 'flat' ? 'Flat' : 'Dual Pitch'} Roof
           </div>
         )}
+        {selectedBuildingId && renderControlsInfo()}
       </div>
     </div>
   );
