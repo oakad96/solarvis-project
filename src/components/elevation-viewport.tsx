@@ -1,148 +1,22 @@
 "use client"
 import { useEffect, useRef, useState } from 'react';
-import {
-  Engine,
-  Scene,
-  Vector3,
-  HemisphericLight,
-  MeshBuilder,
-  StandardMaterial,
-  Color3,
-  Color4,
-  ArcRotateCamera,
-  Mesh,
-  PointerEventTypes,
-  Texture
-} from '@babylonjs/core';
 import { useRoofBuilder } from '../store/RoofBuilderContext';
-import { createBuildingMesh } from '../utils/buildingMeshes';
 
 const ElevationViewport = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const engineRef = useRef<Engine | null>(null);
-  const sceneRef = useRef<Scene | null>(null);
-
+  const svgRef = useRef<SVGSVGElement>(null);
   const { buildings, selectedBuildingId, updateBuilding } = useRoofBuilder();
   const [sliderValue, setSliderValue] = useState(1);
   const selectedBuilding = buildings.find(b => b.id === selectedBuildingId);
 
-  // Track building meshes
-  const buildingMeshesRef = useRef<Map<string, Mesh>>(new Map());
-
+  // Update view when buildings change or selection changes
   useEffect(() => {
-    if (!canvasRef.current) return;
-
-    // Initialize the BabylonJS engine
-    const engine = new Engine(canvasRef.current, true);
-    engineRef.current = engine;
-
-    // Create a new scene
-    const scene = new Scene(engine);
-    sceneRef.current = scene;
-
-    // Set the clear color (sky color)
-    scene.clearColor = new Color4(0.85, 0.85, 0.9, 1);
-
-    // Create a side view camera (elevation view)
-    const camera = new ArcRotateCamera('camera', Math.PI / 2, Math.PI / 2, 10, new Vector3(0, 0, 0), scene);
-    camera.minZ = 0.1;
-
-    // Lock camera to side view only
-    camera.lowerAlphaLimit = camera.upperAlphaLimit = Math.PI / 2;
-    camera.lowerBetaLimit = camera.upperBetaLimit = Math.PI / 2;
-    camera.lowerRadiusLimit = 8;
-    camera.upperRadiusLimit = 12;
-    camera.attachControl(canvasRef.current, false);
-
-    // Add a light to illuminate the scene
-    const light = new HemisphericLight('light', new Vector3(0, 1, 0.5), scene);
-    light.intensity = 0.8;
-
-    // Create a reference ground line
-    const ground = MeshBuilder.CreateGround('ground', { width: 20, height: 0.5 }, scene);
-    const groundMaterial = new StandardMaterial('groundMaterial', scene);
-    groundMaterial.diffuseColor = new Color3(0.2, 0.4, 0.2);
-
-    // Create a checkboard/grid pattern with tiling
-    const gridTexture = new Texture("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAACXBIWXMAAAsTAAALEwEAmpwYAAAGnmlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4gPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgNi4wLWMwMDIgNzkuMTY0NDYwLCAyMDIwLzA1LzEyLTE2OjA0OjE3ICAgICAgICAiPiA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPiA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIiB4bWxuczpleGlmPSJodHRwOi8vbnMuYWRvYmUuY29tL2V4aWYvMS4wLyIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnBob3Rvc2hvcD0iaHR0cDovL25zLmFkb2JlLmNvbS9waG90b3Nob3AvMS4wLyIgeG1sbnM6eG1wTU09Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9tbS8iIHhtbG5zOnN0RXZ0PSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvc1R5cGUvUmVzb3VyY2VFdmVudCMiIGV4aWY6UGl4ZWxYRGltZW5zaW9uPSIxMjgiIGV4aWY6UGl4ZWxZRGltZW5zaW9uPSIxMjgiIHhtcDpDcmVhdGVEYXRlPSIyMDE5LTAyLTA3VDE2OjQ0OjA4KzAxOjAwIiB4bXA6TW9kaWZ5RGF0ZT0iMjAyMC0wNi0yM1QxNToxMTozOSswMjowMCIgeG1wOk1ldGFkYXRhRGF0ZT0iMjAyMC0wNi0yM1QxNToxMTozOSswMjowMCIgZGM6Zm9ybWF0PSJpbWFnZS9wbmciIHBob3Rvc2hvcDpDb2xvck1vZGU9IjMiIHBob3Rvc2hvcDpJQ0NQcm9maWxlPSJzUkdCIElFQzYxOTY2LTIuMSIgeG1wTU06SW5zdGFuY2VJRD0ieG1wLmlpZDo0ZmRlZjE2MS0wOWIzLTQ1OGEtODY1Zi1lYWRjMTk0NzljZTMiIHhtcE1NOkRvY3VtZW50SUQ9ImFkb2JlOmRvY2lkOnBob3Rvc2hvcDpmZjE3YWE2ZC1iNDRlLTZhNGUtYTYzOC05NDhhYjQyNTgyMzYiIHhtcE1NOk9yaWdpbmFsRG9jdW1lbnRJRD0ieG1wLmRpZDowZjNkYWU4NS1jNzE0LTQ2OTAtOWI5Yi0xM2E3YjZlOWI1MTciPiA8eG1wTU06SGlzdG9yeT4gPHJkZjpTZXE+IDxyZGY6bGkgc3RFdnQ6YWN0aW9uPSJzYXZlZCIgc3RFdnQ6aW5zdGFuY2VJRD0ieG1wLmlpZDowZjNkYWU4NS1jNzE0LTQ2OTAtOWI5Yi0xM2E3YjZlOWI1MTciIHN0RXZ0OndoZW49IjIwMTktMDItMDdUMTY6NDY6MzcrMDE6MDAiIHN0RXZ0OnNvZnR3YXJlQWdlbnQ9IkFkb2JlIFBob3Rvc2hvcCBDQyBNYWMgKE1hY2ludG9zaCkiIHN0RXZ0OmNoYW5nZWQ9Ii8iLz4gPHJkZjpsaSBzdEV2dDphY3Rpb249InNhdmVkIiBzdEV2dDppbnN0YW5jZUlEPSJ4bXAuaWlkOjRmZGVmMTYxLTA5YjMtNDU4YS04NjVmLWVhZGMxOTQ3OWNlMyIgc3RFdnQ6d2hlbj0iMjAyMC0wNi0yM1QxNToxMTozOSswMjowMCIgc3RFdnQ6c29mdHdhcmVBZ2VudD0iQWRvYmUgUGhvdG9zaG9wIDIxLjEgKE1hY2ludG9zaCkiIHN0RXZ0OmNoYW5nZWQ9Ii8iLz4gPC9yZGY6U2VxPiA8L3htcE1NOkhpc3Rvcnk+IDwvcmRmOkRlc2NyaXB0aW9uPiA8L3JkZjpSREY+IDwveDp4bXBtZXRhPiA8P3hwYWNrZXQgZW5kPSJyIj8+OhvURAAAAQVJREFUeJzt17ENwkAQRUEmukJCCk5MkQmQUiJ6YIwSc9svbL/w3z9n6dlZb0spuZ+sP2Y32f3yd8g1bMgVlFJmNzMOvM9X8zi6Ac4ngLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2Cr0Q1wPgHMBTAXwFwAcwHMBTAXwFwAcwHMBTAXwFwAcwHMBTAXwFwAcwHMBTAXwFwAcwHMBbAXVFcC+5PN2BIAAAAASUVORK5CYII=", scene);
-    gridTexture.uScale = 20;
-    gridTexture.vScale = 20;
-    groundMaterial.diffuseTexture = gridTexture;
-
-    ground.material = groundMaterial;
-
-    // Start the render loop
-    engine.runRenderLoop(() => {
-      scene.render();
-    });
-
-    // Handle interaction for slope adjustment
-    scene.onPointerObservable.add((pointerInfo) => {
-      if (pointerInfo.type === PointerEventTypes.POINTERDOWN && selectedBuildingId) {
-        const pickResult = scene.pick(scene.pointerX, scene.pointerY);
-        if (pickResult.hit && pickResult.pickedMesh && pickResult.pickedMesh.name.startsWith('roof-')) {
-          // Start tracking pointer movement for slope adjustment
-          const startY = scene.pointerY;
-          const startHeight = selectedBuilding?.ridgeHeight || 1;
-
-          const moveHandler = (event: MouseEvent) => {
-            const deltaY = startY - event.clientY;
-            const newHeight = Math.max(0.2, startHeight + deltaY * 0.05);
-
-            if (selectedBuilding && selectedBuilding.type === 'dualPitch') {
-              updateBuilding(selectedBuildingId, { ridgeHeight: newHeight });
-              setSliderValue(newHeight);
-            }
-          };
-
-          const upHandler = () => {
-            document.removeEventListener('mousemove', moveHandler);
-            document.removeEventListener('mouseup', upHandler);
-          };
-
-          document.addEventListener('mousemove', moveHandler);
-          document.addEventListener('mouseup', upHandler);
-        }
-      }
-    });
-
-    // Handle window resize
-    const resizeHandler = () => {
-      engine.resize();
-    };
-    window.addEventListener('resize', resizeHandler);
-
-    // Cleanup
-    return () => {
-      window.removeEventListener('resize', resizeHandler);
-      engine.dispose();
-    };
-  }, [selectedBuildingId, updateBuilding]);
-
-  // Update scene when buildings change
-  useEffect(() => {
-    if (!sceneRef.current) return;
-
-    // Clear existing building meshes
-    buildingMeshesRef.current.forEach((mesh) => {
-      mesh.dispose();
-    });
-    buildingMeshesRef.current.clear();
-
-    // Only show the selected building in elevation view
-    if (selectedBuildingId) {
-      const selectedBuilding = buildings.find(b => b.id === selectedBuildingId);
-      if (selectedBuilding) {
-        const buildingMesh = createBuildingMesh(sceneRef.current, selectedBuilding);
-        buildingMeshesRef.current.set(selectedBuilding.id, buildingMesh);
-
-        // Update slider to match current ridge height
-        if (selectedBuilding.type === 'dualPitch' && selectedBuilding.ridgeHeight) {
-          setSliderValue(selectedBuilding.ridgeHeight);
-        }
+    if (selectedBuildingId && selectedBuilding) {
+      // Update slider to match current ridge height for dual pitch roofs
+      if (selectedBuilding.type === 'dualPitch' && selectedBuilding.ridgeHeight) {
+        setSliderValue(selectedBuilding.ridgeHeight);
       }
     }
-  }, [buildings, selectedBuildingId]);
+  }, [buildings, selectedBuildingId, selectedBuilding]);
 
   // Handle slider change for ridge height adjustment
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -152,6 +26,77 @@ const ElevationViewport = () => {
     if (selectedBuildingId && selectedBuilding?.type === 'dualPitch') {
       updateBuilding(selectedBuildingId, { ridgeHeight: value });
     }
+  };
+
+  // Render the building SVG
+  const renderBuilding = () => {
+    if (!selectedBuilding) return null;
+
+    const width = 180;
+    const baseHeight = 60;
+    const buildingWidth = selectedBuilding.width || 120;
+    const scaledWidth = Math.min(width, buildingWidth);
+    const x = (width - scaledWidth) / 2;
+
+    if (selectedBuilding.type === 'flat') {
+      return (
+        <g>
+          {/* Ground line */}
+          <line x1="10" y1="160" x2="190" y2="160" stroke="#555" strokeWidth="2" />
+
+          {/* Flat building */}
+          <rect
+            x={x}
+            y={160 - baseHeight}
+            width={scaledWidth}
+            height={baseHeight}
+            fill="#ddd"
+            stroke="#333"
+            strokeWidth="1"
+          />
+
+          {/* Roof line */}
+          <line
+            x1={x}
+            y1={160 - baseHeight}
+            x2={x + scaledWidth}
+            y2={160 - baseHeight}
+            stroke="#555"
+            strokeWidth="2"
+          />
+        </g>
+      );
+    } else if (selectedBuilding.type === 'dualPitch') {
+      const roofHeight = sliderValue * 30; // Scale the roof height for visual effect
+
+      return (
+        <g>
+          {/* Ground line */}
+          <line x1="10" y1="160" x2="190" y2="160" stroke="#555" strokeWidth="2" />
+
+          {/* Building walls */}
+          <rect
+            x={x}
+            y={160 - baseHeight}
+            width={scaledWidth}
+            height={baseHeight}
+            fill="#ddd"
+            stroke="#333"
+            strokeWidth="1"
+          />
+
+          {/* Roof */}
+          <polygon
+            points={`${x},${160 - baseHeight} ${x + scaledWidth / 2},${160 - baseHeight - roofHeight} ${x + scaledWidth},${160 - baseHeight}`}
+            fill="#b87333"
+            stroke="#555"
+            strokeWidth="1"
+          />
+        </g>
+      );
+    }
+
+    return null;
   };
 
   return (
@@ -182,7 +127,16 @@ const ElevationViewport = () => {
         )}
       </div>
       <div style={{ flex: 1, position: 'relative' }}>
-        <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
+        <svg
+          ref={svgRef}
+          width="100%"
+          height="100%"
+          viewBox="0 0 200 200"
+          style={{ backgroundColor: '#eef' }}
+        >
+          {renderBuilding()}
+        </svg>
+
         {!selectedBuildingId && (
           <div style={{
             position: 'absolute',
@@ -219,7 +173,7 @@ const ElevationViewport = () => {
             borderRadius: '4px',
             fontSize: '14px',
           }}>
-            Drag roof or use slider to adjust slope
+            Use slider to adjust roof height
           </div>
         )}
       </div>
