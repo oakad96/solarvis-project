@@ -13,7 +13,9 @@ import {
   PointerEventTypes,
   PickingInfo,
   Mesh,
-  ArcRotateCamera
+  ArcRotateCamera,
+  ActionManager,
+  ExecuteCodeAction
 } from '@babylonjs/core';
 import { v4 as uuidv4 } from 'uuid';
 import { useRoofBuilder, Building } from '../store/RoofBuilderContext';
@@ -55,6 +57,8 @@ const MainViewport = () => {
     const scene = new Scene(engine);
     sceneRef.current = scene;
 
+    console.log("Scene initialized");
+
     // Set the clear color (sky color)
     scene.clearColor = new Color4(0.9, 0.9, 0.9, 1);
 
@@ -82,24 +86,72 @@ const MainViewport = () => {
     const ground = MeshBuilder.CreateGround('ground', { width: 20, height: 20 }, scene);
     const groundMaterial = new StandardMaterial('groundMaterial', scene);
     groundMaterial.diffuseColor = new Color3(0.2, 0.4, 0.2);
+
+    // Create a checkboard/grid pattern with tiling
+    const gridTexture = new Texture("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAACXBIWXMAAAsTAAALEwEAmpwYAAAGnmlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4gPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgNi4wLWMwMDIgNzkuMTY0NDYwLCAyMDIwLzA1LzEyLTE2OjA0OjE3ICAgICAgICAiPiA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPiA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIiB4bWxuczpleGlmPSJodHRwOi8vbnMuYWRvYmUuY29tL2V4aWYvMS4wLyIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnBob3Rvc2hvcD0iaHR0cDovL25zLmFkb2JlLmNvbS9waG90b3Nob3AvMS4wLyIgeG1sbnM6eG1wTU09Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9tbS8iIHhtbG5zOnN0RXZ0PSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvc1R5cGUvUmVzb3VyY2VFdmVudCMiIGV4aWY6UGl4ZWxYRGltZW5zaW9uPSIxMjgiIGV4aWY6UGl4ZWxZRGltZW5zaW9uPSIxMjgiIHhtcDpDcmVhdGVEYXRlPSIyMDE5LTAyLTA3VDE2OjQ0OjA4KzAxOjAwIiB4bXA6TW9kaWZ5RGF0ZT0iMjAyMC0wNi0yM1QxNToxMTozOSswMjowMCIgeG1wOk1ldGFkYXRhRGF0ZT0iMjAyMC0wNi0yM1QxNToxMTozOSswMjowMCIgZGM6Zm9ybWF0PSJpbWFnZS9wbmciIHBob3Rvc2hvcDpDb2xvck1vZGU9IjMiIHBob3Rvc2hvcDpJQ0NQcm9maWxlPSJzUkdCIElFQzYxOTY2LTIuMSIgeG1wTU06SW5zdGFuY2VJRD0ieG1wLmlpZDo0ZmRlZjE2MS0wOWIzLTQ1OGEtODY1Zi1lYWRjMTk0NzljZTMiIHhtcE1NOkRvY3VtZW50SUQ9ImFkb2JlOmRvY2lkOnBob3Rvc2hvcDpmZjE3YWE2ZC1iNDRlLTZhNGUtYTYzOC05NDhhYjQyNTgyMzYiIHhtcE1NOk9yaWdpbmFsRG9jdW1lbnRJRD0ieG1wLmRpZDowZjNkYWU4NS1jNzE0LTQ2OTAtOWI5Yi0xM2E3YjZlOWI1MTciPiA8eG1wTU06SGlzdG9yeT4gPHJkZjpTZXE+IDxyZGY6bGkgc3RFdnQ6YWN0aW9uPSJzYXZlZCIgc3RFdnQ6aW5zdGFuY2VJRD0ieG1wLmlpZDowZjNkYWU4NS1jNzE0LTQ2OTAtOWI5Yi0xM2E3YjZlOWI1MTciIHN0RXZ0OndoZW49IjIwMTktMDItMDdUMTY6NDY6MzcrMDE6MDAiIHN0RXZ0OnNvZnR3YXJlQWdlbnQ9IkFkb2JlIFBob3Rvc2hvcCBDQyBNYWMgKE1hY2ludG9zaCkiIHN0RXZ0OmNoYW5nZWQ9Ii8iLz4gPHJkZjpsaSBzdEV2dDphY3Rpb249InNhdmVkIiBzdEV2dDppbnN0YW5jZUlEPSJ4bXAuaWlkOjRmZGVmMTYxLTA5YjMtNDU4YS04NjVmLWVhZGMxOTQ3OWNlMyIgc3RFdnQ6d2hlbj0iMjAyMC0wNi0yM1QxNToxMTozOSswMjowMCIgc3RFdnQ6c29mdHdhcmVBZ2VudD0iQWRvYmUgUGhvdG9zaG9wIDIxLjEgKE1hY2ludG9zaCkiIHN0RXZ0OmNoYW5nZWQ9Ii8iLz4gPC9yZGY6U2VxPiA8L3htcE1NOkhpc3Rvcnk+IDwvcmRmOkRlc2NyaXB0aW9uPiA8L3JkZjpSREY+IDwveDp4bXBtZXRhPiA8P3hwYWNrZXQgZW5kPSJyIj8+OhvURAAAAQVJREFUeJzt17ENwkAQRUEmukJCCk5MkQmQUiJ6YIwSc9svbL/w3z9n6dlZb0spuZ+sP2Y32f3yd8g1bMgVlFJmNzMOvM9X8zi6Ac4ngLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2AugLkA5gKYC2Cr0Q1wPgHMBTAXwFwAcwHMBTAXwFwAcwHMBTAXwFwAcwHMBTAXwFwAcwHMBTAXwFwAcwHMBbAXVFcC+5PN2BIAAAAASUVORK5CYII=", scene);
+    gridTexture.uScale = 20;
+    gridTexture.vScale = 20;
+    groundMaterial.diffuseTexture = gridTexture;
+
     ground.material = groundMaterial;
 
-    // Setup grid texture for the ground
-    const gridTexture = new Texture('/grid.png', scene);
-    groundMaterial.diffuseTexture = gridTexture;
+    console.log("Ground created with name:", ground.name);
 
     // Handle pointer events for placement and control point interactions
     scene.onPointerObservable.add((pointerInfo) => {
+      console.log("Pointer event type:", pointerInfo.type);
+
       const pickResult = scene.pick(scene.pointerX, scene.pointerY);
+      console.log("Pick result", {
+        hit: pickResult.hit,
+        pickedMeshName: pickResult.pickedMesh?.name,
+        pickedPoint: pickResult.pickedPoint
+      });
 
       if (pointerInfo.type === PointerEventTypes.POINTERMOVE) {
         handlePointerMove(pickResult);
       } else if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
+        console.log("POINTER DOWN", {
+          placementMode,
+          currentRoofType,
+          ghostBuildingEnabled: ghostBuildingRef.current?.isEnabled()
+        });
         handlePointerDown(pickResult);
       } else if (pointerInfo.type === PointerEventTypes.POINTERUP) {
         handlePointerUp();
       }
     });
+
+    // Fix: Explicitly handle click event on the ground
+    ground.actionManager = new ActionManager(scene);
+    ground.actionManager.registerAction(
+      new ExecuteCodeAction(
+        ActionManager.OnPickDownTrigger,
+        () => {
+          console.log("Ground clicked directly");
+          if (placementMode && currentRoofType && ghostBuildingRef.current) {
+            const position = {
+              x: ghostBuildingRef.current.position.x,
+              z: ghostBuildingRef.current.position.z
+            };
+
+            const newBuilding: Building = {
+              id: uuidv4(),
+              type: currentRoofType,
+              position,
+              rotation: 0,
+              width: 3,
+              length: 5,
+              height: 2,
+              ...(currentRoofType === 'dualPitch' ? { ridgeHeight: 1, ridgeOffset: 0 } : {})
+            };
+
+            addBuilding(newBuilding);
+            setPlacementMode(false);
+          }
+        }
+      )
+    );
 
     // Start the render loop
     engine.runRenderLoop(() => {
@@ -346,6 +398,7 @@ const MainViewport = () => {
           onClick={() => {
             setPlacementMode(true);
             setCurrentRoofType('flat');
+            console.log("Flat roof button clicked", { placementMode: true, currentRoofType: 'flat' });
           }}
           style={{
             padding: '0.5rem 1rem',
@@ -362,6 +415,7 @@ const MainViewport = () => {
           onClick={() => {
             setPlacementMode(true);
             setCurrentRoofType('dualPitch');
+            console.log("Dual pitch roof button clicked", { placementMode: true, currentRoofType: 'dualPitch' });
           }}
           style={{
             padding: '0.5rem 1rem',
@@ -376,7 +430,34 @@ const MainViewport = () => {
         </button>
       </div>
       <div style={{ flex: 1, position: 'relative' }}>
-        <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
+        <canvas
+          ref={canvasRef}
+          style={{ width: '100%', height: '100%' }}
+          onClick={() => {
+            if (placementMode && currentRoofType && sceneRef.current && ghostBuildingRef.current) {
+              console.log("Canvas clicked in placement mode", { currentRoofType });
+
+              const position = {
+                x: ghostBuildingRef.current.position.x,
+                z: ghostBuildingRef.current.position.z
+              };
+
+              const newBuilding: Building = {
+                id: uuidv4(),
+                type: currentRoofType,
+                position,
+                rotation: 0,
+                width: 3,
+                length: 5,
+                height: 2,
+                ...(currentRoofType === 'dualPitch' ? { ridgeHeight: 1, ridgeOffset: 0 } : {})
+              };
+
+              addBuilding(newBuilding);
+              setPlacementMode(false);
+            }
+          }}
+        />
         {placementMode && (
           <div style={{
             position: 'absolute',

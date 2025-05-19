@@ -116,10 +116,13 @@ const createGableRoof = (scene: Scene, building: Building): Mesh => {
   vertexData.positions = roofVertices.flatMap(v => [v.x, v.y, v.z]);
   vertexData.indices = roofIndices;
 
+  // Initialize the normals array before computing
+  vertexData.normals = new Array(vertexData.positions.length).fill(0);
+
   // Calculate normal vectors for proper lighting
   VertexData.ComputeNormals(
     vertexData.positions,
-    vertexData.indices,
+    vertexData.indices, 
     vertexData.normals
   );
 
