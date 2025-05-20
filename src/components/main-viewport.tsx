@@ -129,7 +129,7 @@ const MainViewport = () => {
               rotation: 0,
               width: 3,
               length: 5,
-              height: 2,
+              height: 5,
               ...(currentRoofType === 'dualPitch' ? { ridgeHeight: 1, ridgeOffset: 0 } : {})
             };
 
@@ -290,7 +290,7 @@ const MainViewport = () => {
         rotation: 0,
         width: 3,
         length: 5,
-        height: 2,
+        height: 5,
         ...(currentRoofType === 'dualPitch' ? { ridgeHeight: 1, ridgeOffset: 0 } : {})
       };
 
@@ -581,7 +581,7 @@ const MainViewport = () => {
                 rotation: 0,
                 width: 3,
                 length: 5,
-                height: 2,
+                height: 5,
                 ...(currentRoofType === 'dualPitch' ? { ridgeHeight: 1, ridgeOffset: 0 } : {})
               };
 
