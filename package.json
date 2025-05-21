@@ -12,6 +12,7 @@
     "@babylonjs/core": "^8.8.5",
     "@types/uuid": "^10.0.0",
     "babylonjs": "^8.8.5",
+    "earcut": "^3.0.1",
     "next": "15.3.2",
     "react": "^19.0.0",
     "react-babylonjs": "^3.2.5-beta.2",
