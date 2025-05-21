@@ -152,6 +152,11 @@ export class BuildingEditor {
   private _rotationHandle: Mesh | null = null;
 
   /**
+   * Parent node for the rotation handle
+   */
+  private _rotationHandleParent: TransformNode | null = null;
+
+  /**
    * Observable that fires when the building is modified
    */
   public onBuildingModifiedObservable = new Observable<Building>();
@@ -389,47 +394,62 @@ export class BuildingEditor {
     );
 
     const handleMaterial = new StandardMaterial(
-      "rotationHandleMaterial",
+      "rotationHandleMaterial", 
       this._utilityLayer.utilityLayerScene
     );
     handleMaterial.diffuseColor = new Color3(1, 0.8, 0.1);
     handleMaterial.emissiveColor = new Color3(0.5, 0.4, 0);
     this._rotationHandle.material = handleMaterial;
 
+    // Create a fixed-position parent for the rotation handle
+    this._rotationHandleParent = new TransformNode("rotationHandleParent", this._utilityLayer.utilityLayerScene);
+    this._rotationHandleParent.parent = this._rootNode;
+
     // Position handle above the top edge
     this._rotationHandle.position = new Vector3(0, 0.1, -0.7);
-    this._rotationHandle.parent = this._rootNode;
+    this._rotationHandle.parent = this._rotationHandleParent;
 
     // Add drag behavior for rotation
     const dragBehavior = new PointerDragBehavior({
-      dragPlaneNormal: new Vector3(0, 1, 0)
+      dragPlaneNormal: new Vector3(0, 1, 0) 
     });
 
     dragBehavior.onDragStartObservable.add(() => {
       if (this._building && this._rotationHandle) {
         this._rotationHandle.metadata = {
           initialRotation: this._building.rotation,
-          initialCenterX: this._building.position.x,
-          initialCenterZ: this._building.position.z
+          initialDragPosition: dragBehavior.lastDragPosition.clone(),
+          lastAngle: 0
         };
       }
     });
 
     dragBehavior.onDragObservable.add((event) => {
-      if (!this._building || !this._targetMesh) return;
+      if (!this._building || !this._targetMesh || !this._rotationHandle) return;
 
       // Calculate rotation based on drag position relative to building center
       const centerPoint = new Vector3(0, 0, 0);
       const dragPoint = event.dragPlanePoint;
 
+      // Get the vector from center to drag point
+      const dragVector = dragPoint.subtract(centerPoint);
+
       // Calculate angle between original and current position
-      const angle = Math.atan2(
-        dragPoint.z - centerPoint.z,
-        dragPoint.x - centerPoint.x
-      );
+      const angle = Math.atan2(dragVector.x, dragVector.z);
+
+      // If this is the first drag event, store the initial angle
+      if (!this._rotationHandle.metadata.hasOwnProperty('initialAngle')) {
+        this._rotationHandle.metadata.initialAngle = angle;
+      }
+
+      // Calculate angle difference from the initial angle
+      const angleDiff = angle - this._rotationHandle.metadata.initialAngle;
+
+      // Apply the rotation difference to the initial rotation
+      const newRotation = this._rotationHandle.metadata.initialRotation + angleDiff;
 
       // Update the rotation
-      this._updateBuildingRotation(angle + Math.PI / 2);
+      this._updateBuildingRotation(newRotation);
     });
 
     dragBehavior.onDragEndObservable.add(() => {
@@ -599,9 +619,19 @@ export class BuildingEditor {
       }
     });
 
-    // Update rotation handle position
-    if (this._rotationHandle) {
-      this._rotationHandle.position.z = -this._building.length / 2 - 0.5;
+    // Update rotation handle position - keep a fixed offset from the top edge
+    if (this._rotationHandle && this._rotationHandleParent) {
+      // Position the rotation handle's parent to stay at a fixed offset from the top edge
+      // This keeps it in a consistent position regardless of the building's width/length
+      this._rotationHandleParent.position.z = -this._building.length / 2 - 0.5;
+      this._rotationHandleParent.position.x = 0;
+
+      // Keep the handle itself at a fixed height above the ground
+      this._rotationHandle.position.y = 0.1;
+
+      // Reset the local position of the handle (except for height)
+      this._rotationHandle.position.x = 0;
+      this._rotationHandle.position.z = 0;
     }
   }
 
@@ -656,6 +686,11 @@ export class BuildingEditor {
     if (this._rotationHandle) {
       this._rotationHandle.dispose();
       this._rotationHandle = null;
+    }
+
+    if (this._rotationHandleParent) {
+      this._rotationHandleParent.dispose();
+      this._rotationHandleParent = null;
     }
 
     this._boundingBox.dispose();
