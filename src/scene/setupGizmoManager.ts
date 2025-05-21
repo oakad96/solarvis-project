@@ -157,6 +157,11 @@ export class BuildingEditor {
   private _rotationHandleParent: TransformNode | null = null;
 
   /**
+   * Central drag handle for moving the entire building
+   */
+  private _dragHandle: Mesh | null = null;
+
+  /**
    * Observable that fires when the building is modified
    */
   public onBuildingModifiedObservable = new Observable<Building>();
@@ -209,6 +214,9 @@ export class BuildingEditor {
 
     // Create rotation handle
     this._createRotationHandle();
+
+    // Create central drag handle
+    this._createDragHandle();
   }
 
   /**
@@ -240,46 +248,90 @@ export class BuildingEditor {
 
       // Store reference positions when drag begins
       dragBehavior.onDragStartObservable.add(() => {
-        if (this._building) {
+        if (this._building && this._targetMesh) {
           corner.metadata.initialWidth = this._building.width;
           corner.metadata.initialLength = this._building.length;
           corner.metadata.initialCornerPositionX = corner.position.x;
           corner.metadata.initialCornerPositionZ = corner.position.z;
           corner.metadata.dragStartPositionX = dragBehavior.lastDragPosition.x;
           corner.metadata.dragStartPositionZ = dragBehavior.lastDragPosition.z;
+
+          // Store mesh center position for calculations
+          corner.metadata.meshCenter = this._targetMesh.position.clone();
+
+          // Store current rotation
+          corner.metadata.initialRotation = this._building.rotation || 0;
         }
       });
 
-      // Use direct drag position instead of delta for more reliable resizing
+      // Use a completely different approach for rotated resizing
       dragBehavior.onDragObservable.add((event) => {
-        if (!this._building) return;
+        if (!this._building || !this._targetMesh) return;
 
-        const deltaX = event.dragPlanePoint.x - corner.metadata.dragStartPositionX;
-        const deltaZ = event.dragPlanePoint.z - corner.metadata.dragStartPositionZ;
+        // Calculate the current drag position relative to mesh center
+        const meshCenter = corner.metadata.meshCenter;
+        const currentDragPos = new Vector3(
+          event.dragPlanePoint.x,
+          0,
+          event.dragPlanePoint.z
+        );
 
-        // Update the building dimensions based on which corner is being dragged
-        let newWidth = this._building.width;
-        let newLength = this._building.length;
+        // Get current rotation
+        const rotation = this._building.rotation || 0;
 
-        // Handle width changes
-        if (pos.id.includes('Left')) {
-          newWidth = corner.metadata.initialWidth - deltaX * 2;
+        // Create rotation matrix to un-rotate the drag position
+        const cosTheta = Math.cos(-rotation);
+        const sinTheta = Math.sin(-rotation);
+
+        // Calculate the drag point in local (unrotated) space
+        const localDragX = (currentDragPos.x - meshCenter.x) * cosTheta -
+          (currentDragPos.z - meshCenter.z) * sinTheta;
+        const localDragZ = (currentDragPos.x - meshCenter.x) * sinTheta +
+          (currentDragPos.z - meshCenter.z) * cosTheta;
+
+        // Get the sign for each dimension based on which corner we're dragging
+        const xDirection = pos.id.includes('Left') ? -1 : 1;
+        const zDirection = pos.id.includes('top') ? -1 : 1;
+
+        // Use distance from center * 2 as the dimension
+        // If we're on the negative side of an axis, the sign will be flipped
+        const calculatedWidth = 2 * Math.abs(localDragX);
+        const calculatedLength = 2 * Math.abs(localDragZ);
+
+        // Determine if we should increase or decrease dimensions based on drag direction
+        const initialWidth = corner.metadata.initialWidth;
+        const initialLength = corner.metadata.initialLength;
+
+        // For each dimension:
+        // - Check if the drag point is moving outward (expanding) or inward (shrinking)
+        // - Adjust dimension accordingly
+        let newWidth = initialWidth;
+        let newLength = initialLength;
+
+        // Handle the X dimension (width)
+        // Is the drag point moving away from center?
+        if (xDirection * localDragX > 0) {
+          // Moving outward (expanding)
+          newWidth = Math.max(calculatedWidth, initialWidth);
         } else {
-          newWidth = corner.metadata.initialWidth + deltaX * 2;
+          // Moving inward (shrinking)
+          newWidth = Math.min(calculatedWidth, initialWidth);
         }
 
-        // Handle length changes
-        if (pos.id.includes('top')) {
-          newLength = corner.metadata.initialLength - deltaZ * 2;
+        // Handle the Z dimension (length)
+        if (zDirection * localDragZ > 0) {
+          // Moving outward (expanding)
+          newLength = Math.max(calculatedLength, initialLength);
         } else {
-          newLength = corner.metadata.initialLength + deltaZ * 2;
+          // Moving inward (shrinking)
+          newLength = Math.min(calculatedLength, initialLength);
         }
 
         // Ensure minimum size
         newWidth = Math.max(1, newWidth);
         newLength = Math.max(1, newLength);
 
-        // Update the building
+        // Update the building dimensions
         this._updateBuildingDimensions(newWidth, newLength);
       });
 
@@ -323,40 +375,85 @@ export class BuildingEditor {
 
       // Store reference positions when drag begins
       dragBehavior.onDragStartObservable.add(() => {
-        if (this._building) {
+        if (this._building && this._targetMesh) {
           edge.metadata.initialWidth = this._building.width;
           edge.metadata.initialLength = this._building.length;
           edge.metadata.initialEdgePositionX = edge.position.x;
           edge.metadata.initialEdgePositionZ = edge.position.z;
           edge.metadata.dragStartPositionX = dragBehavior.lastDragPosition.x;
           edge.metadata.dragStartPositionZ = dragBehavior.lastDragPosition.z;
+
+          // Store mesh center position for calculations
+          edge.metadata.meshCenter = this._targetMesh.position.clone();
+
+          // Store current rotation
+          edge.metadata.initialRotation = this._building.rotation || 0;
         }
       });
 
-      // Use direct drag position instead of delta for more reliable resizing
+      // Use the same approach as corners but adapted for edges
       dragBehavior.onDragObservable.add((event) => {
-        if (!this._building) return;
+        if (!this._building || !this._targetMesh) return;
 
-        const deltaX = event.dragPlanePoint.x - edge.metadata.dragStartPositionX;
-        const deltaZ = event.dragPlanePoint.z - edge.metadata.dragStartPositionZ;
+        // Calculate the current drag position relative to mesh center
+        const meshCenter = edge.metadata.meshCenter;
+        const currentDragPos = new Vector3(
+          event.dragPlanePoint.x,
+          0,
+          event.dragPlanePoint.z
+        );
 
-        let newWidth = this._building.width;
-        let newLength = this._building.length;
+        // Get current rotation
+        const rotation = this._building.rotation || 0;
+
+        // Create rotation matrix to un-rotate the drag position
+        const cosTheta = Math.cos(-rotation);
+        const sinTheta = Math.sin(-rotation);
+
+        // Calculate the drag point in local (unrotated) space
+        const localDragX = (currentDragPos.x - meshCenter.x) * cosTheta -
+          (currentDragPos.z - meshCenter.z) * sinTheta;
+        const localDragZ = (currentDragPos.x - meshCenter.x) * sinTheta +
+          (currentDragPos.z - meshCenter.z) * cosTheta;
+
+        const initialWidth = edge.metadata.initialWidth;
+        const initialLength = edge.metadata.initialLength;
+
+        let newWidth = initialWidth;
+        let newLength = initialLength;
 
         // Handle resizing based on which edge is being dragged
         if (pos.axis === 'x') {
-          // Left or right edge
-          if (pos.id === 'left') {
-            newWidth = edge.metadata.initialWidth - deltaX * 2;
+          // Left or right edge - only change width
+          // Calculate dimension based on 2x distance from center
+          const calculatedWidth = 2 * Math.abs(localDragX);
+
+          // Determine direction based on which edge
+          const xDirection = pos.id === 'left' ? -1 : 1;
+
+          // Is the drag point moving away from center?
+          if (xDirection * localDragX > 0) {
+            // Moving outward (expanding)
+            newWidth = Math.max(calculatedWidth, initialWidth);
           } else {
-            newWidth = edge.metadata.initialWidth + deltaX * 2;
+            // Moving inward (shrinking)
+            newWidth = Math.min(calculatedWidth, initialWidth);
           }
         } else {
-          // Top or bottom edge
-          if (pos.id === 'top') {
-            newLength = edge.metadata.initialLength - deltaZ * 2;
+          // Top or bottom edge - only change length
+          // Calculate dimension based on 2x distance from center
+          const calculatedLength = 2 * Math.abs(localDragZ);
+
+          // Determine direction based on which edge
+          const zDirection = pos.id === 'top' ? -1 : 1;
+
+          // Is the drag point moving away from center?
+          if (zDirection * localDragZ > 0) {
+            // Moving outward (expanding)
+            newLength = Math.max(calculatedLength, initialLength);
           } else {
-            newLength = edge.metadata.initialLength + deltaZ * 2;
+            // Moving inward (shrinking)
+            newLength = Math.min(calculatedLength, initialLength);
           }
         }
 
@@ -364,7 +461,7 @@ export class BuildingEditor {
         newWidth = Math.max(1, newWidth);
         newLength = Math.max(1, newLength);
 
-        // Update the building
+        // Update the building dimensions
         this._updateBuildingDimensions(newWidth, newLength);
       });
 
@@ -457,6 +554,84 @@ export class BuildingEditor {
     });
 
     this._rotationHandle.addBehavior(dragBehavior);
+  }
+
+  /**
+   * Create a central drag handle for repositioning the building
+   */
+  private _createDragHandle(): void {
+    // Create a central handle for dragging the entire building
+    this._dragHandle = MeshBuilder.CreatePlane(
+      "dragHandle",
+      {
+        width: 0.8,
+        height: 0.8
+      },
+      this._utilityLayer.utilityLayerScene
+    );
+
+    // Rotate the plane to be horizontal
+    this._dragHandle.rotation.x = Math.PI / 2;
+
+    // Position it slightly above the building to avoid z-fighting
+    this._dragHandle.position.y = 0.05;
+
+    // Create material for the drag handle
+    const handleMaterial = new StandardMaterial(
+      "dragHandleMaterial",
+      this._utilityLayer.utilityLayerScene
+    );
+    handleMaterial.diffuseColor = new Color3(0.3, 0.7, 1);
+    handleMaterial.alpha = 0.2; // Make it semi-transparent
+    this._dragHandle.material = handleMaterial;
+
+    // Make the handle a child of the root node
+    this._dragHandle.parent = this._rootNode;
+
+    // Add drag behavior for moving the entire building
+    const dragBehavior = new PointerDragBehavior({
+      dragPlaneNormal: new Vector3(0, 1, 0)
+    });
+
+    dragBehavior.onDragStartObservable.add(() => {
+      if (this._building && this._targetMesh) {
+        this._dragHandle!.metadata = {
+          initialPosition: this._targetMesh.position.clone()
+        };
+      }
+    });
+
+    dragBehavior.onDragObservable.add((event) => {
+      if (!this._building || !this._targetMesh) return;
+
+      // Calculate the new position
+      const deltaX = event.delta.x;
+      const deltaZ = event.delta.z;
+
+      // Update the target mesh position
+      this._targetMesh.position.x += deltaX;
+      this._targetMesh.position.z += deltaZ;
+
+      // Update the editor position to follow
+      this._rootNode.position.copyFrom(this._targetMesh.position);
+
+      // Update the building data
+      if (this._building.position) {
+        this._building.position.x = this._targetMesh.position.x;
+        this._building.position.z = this._targetMesh.position.z;
+      } else {
+        this._building.position = {
+          x: this._targetMesh.position.x,
+          z: this._targetMesh.position.z
+        };
+      }
+    });
+
+    dragBehavior.onDragEndObservable.add(() => {
+      this._notifyBuildingModified();
+    });
+
+    this._dragHandle.addBehavior(dragBehavior);
   }
 
   /**
@@ -597,11 +772,14 @@ export class BuildingEditor {
     this._rootNode.position.copyFrom(this._targetMesh.position);
     this._rootNode.rotation.y = this._targetMesh.rotation.y;
 
-    // Update corner control positions
+    // Update corner control positions - let the parent node handle rotation
     this._cornerControls.forEach(corner => {
       const originalPos = corner.metadata.originalPosition;
+
+      // Just scale the local positions, rotation is handled by the parent node
       corner.position.x = originalPos.x * this._building!.width;
       corner.position.z = originalPos.z * this._building!.length;
+      corner.position.y = originalPos.y; // Keep original height
     });
 
     // Update edge control positions
@@ -617,14 +795,15 @@ export class BuildingEditor {
         edge.position.x = 0;
         edge.position.z = originalPos.z * this._building!.length;
       }
+
+      edge.position.y = originalPos.y; // Keep original height
     });
 
     // Update rotation handle position - keep a fixed offset from the top edge
     if (this._rotationHandle && this._rotationHandleParent) {
       // Position the rotation handle's parent to stay at a fixed offset from the top edge
-      // This keeps it in a consistent position regardless of the building's width/length
-      this._rotationHandleParent.position.z = -this._building.length / 2 - 0.5;
       this._rotationHandleParent.position.x = 0;
+      this._rotationHandleParent.position.z = -this._building.length / 2 - 0.5;
 
       // Keep the handle itself at a fixed height above the ground
       this._rotationHandle.position.y = 0.1;
@@ -691,6 +870,11 @@ export class BuildingEditor {
     if (this._rotationHandleParent) {
       this._rotationHandleParent.dispose();
       this._rotationHandleParent = null;
+    }
+
+    if (this._dragHandle) {
+      this._dragHandle.dispose();
+      this._dragHandle = null;
     }
 
     this._boundingBox.dispose();
