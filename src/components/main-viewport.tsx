@@ -4,7 +4,6 @@ import {
   Engine,
   Scene,
   Vector3,
-  HemisphericLight,
   Color4,
   PointerEventTypes,
   PickingInfo,
@@ -71,9 +70,9 @@ const MainViewport = () => {
     // Setup camera using the imported helper function
     setupCamera(scene, canvasRef.current);
 
-    // Add a light to illuminate the scene
-    const light = new HemisphericLight('light', new Vector3(0, 1, 0), scene);
-    light.intensity = 0.7;
+    // Remove the light to avoid affecting the ground texture
+    // const light = new HemisphericLight('light', new Vector3(0, 1, 0), scene);
+    // light.intensity = 0.7;
 
     // Setup ground using the imported helper function
     const ground = setupGround(scene);
