@@ -3,7 +3,6 @@ import { useEffect, useRef } from 'react';
 import {
   Engine,
   Scene,
-  Vector3,
   Color4,
   PointerEventTypes,
   PickingInfo,
@@ -11,9 +10,7 @@ import {
   ActionManager,
   ExecuteCodeAction,
   GizmoManager,
-  PlaneRotationGizmo,
-  UtilityLayerRenderer,
-  Color3
+  UtilityLayerRenderer
 } from '@babylonjs/core';
 import { v4 as uuidv4 } from 'uuid';
 import { useRoofBuilder, Building } from '../store/RoofBuilderContext';
@@ -22,7 +19,7 @@ import { createBuildingMesh } from '../utils/buildingMeshes';
 // Import setup functions from separate files
 import { setupCamera } from '../scene/setupCamera';
 import { setupGround } from '../scene/setupGround';
-import { setupGizmoManager } from '../scene/setupGizmoManager';
+import { setupGizmoManager, BuildingEditor } from '../scene/setupGizmoManager';
 
 const MainViewport = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -45,11 +42,13 @@ const MainViewport = () => {
   const buildingMeshesRef = useRef<Map<string, Mesh>>(new Map());
   const ghostBuildingRef = useRef<Mesh | null>(null);
   const gizmoManagerRef = useRef<GizmoManager | null>(null);
-  const currentGizmoMode = useRef<'translate' | 'rotate' | 'scale' | null>(null);
 
-  // Add refs for direct gizmo access
-  const planeRotationGizmoRef = useRef<PlaneRotationGizmo | null>(null);
+  // Replace the rotation gizmo ref with our new building editor ref
+  const buildingEditorRef = useRef<BuildingEditor | null>(null);
   const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
+
+  // Track editor mode
+  const currentEditorMode = useRef<'move' | 'edit' | null>(null);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -77,13 +76,26 @@ const MainViewport = () => {
     // Setup ground using the imported helper function
     const ground = setupGround(scene);
 
-    // Setup gizmo manager using the imported helper function
+    // Setup gizmo manager using the imported helper function (we'll still use it for moving)
     const gizmoManager = setupGizmoManager(scene);
     gizmoManagerRef.current = gizmoManager;
 
-    // Create utility layer for our custom gizmos
+    // Create utility layer for our custom controls
     const utilityLayer = new UtilityLayerRenderer(scene);
     utilityLayerRef.current = utilityLayer;
+
+    // Create our custom building editor
+    const buildingEditor = new BuildingEditor(scene);
+    buildingEditorRef.current = buildingEditor;
+
+    // Set up observer to update building data when editor modifies it
+    buildingEditor.onBuildingModifiedObservable.add((modifiedBuilding) => {
+      // Create a shallow copy of the building to ensure React detects the change
+      updateBuilding(modifiedBuilding.id, {
+        ...modifiedBuilding,
+        position: { ...modifiedBuilding.position }
+      });
+    });
 
     // Handle pointer events for placement and selection
     scene.onPointerObservable.add((pointerInfo) => {
@@ -155,9 +167,9 @@ const MainViewport = () => {
       window.removeEventListener('resize', resizeHandler);
 
       // Clean up custom gizmos
-      if (planeRotationGizmoRef.current) {
-        planeRotationGizmoRef.current.dispose();
-        planeRotationGizmoRef.current = null;
+      if (buildingEditorRef.current) {
+        buildingEditorRef.current.dispose();
+        buildingEditorRef.current = null;
       }
 
       engine.dispose();
@@ -166,7 +178,7 @@ const MainViewport = () => {
 
   // Update scene when buildings change
   useEffect(() => {
-    if (!sceneRef.current || !gizmoManagerRef.current) return;
+    if (!sceneRef.current) return;
 
     console.log("Buildings updated:", buildings);
     console.log("Selected building ID:", selectedBuildingId);
@@ -177,8 +189,15 @@ const MainViewport = () => {
     });
     buildingMeshesRef.current.clear();
 
-    // Detach gizmo from any previously selected mesh
-    gizmoManagerRef.current.attachToMesh(null);
+    // Detach editor from any previously selected mesh
+    if (buildingEditorRef.current) {
+      buildingEditorRef.current.detach();
+    }
+
+    // Detach gizmo from any previously selected mesh (for move mode)
+    if (gizmoManagerRef.current) {
+      gizmoManagerRef.current.attachToMesh(null);
+    }
 
     // Create meshes for each building
     buildings.forEach((building) => {
@@ -192,18 +211,17 @@ const MainViewport = () => {
         child.isPickable = true;
       });
 
-      // Attach gizmo to the selected building
+      // Attach appropriate control to the selected building
       if (building.id === selectedBuildingId) {
-        console.log("Attaching gizmos to selected building:", building.id);
-        gizmoManagerRef.current!.attachToMesh(buildingMesh);
+        console.log("Attaching controls to selected building:", building.id);
 
-        // Apply current gizmo mode if one is set
-        if (currentGizmoMode.current === 'translate') {
-          enableTranslateGizmo();
-        } else if (currentGizmoMode.current === 'rotate') {
-          enableRotateGizmo();
-        } else if (currentGizmoMode.current === 'scale') {
-          enableScaleGizmo();
+        if (currentEditorMode.current === 'move') {
+          // Use position gizmo for moving
+          gizmoManagerRef.current?.attachToMesh(buildingMesh);
+          enableMoveGizmo();
+        } else if (currentEditorMode.current === 'edit') {
+          // Use our custom editor for resizing/rotating
+          buildingEditorRef.current?.attach(building, buildingMesh);
         }
       }
     });
@@ -317,7 +335,7 @@ const MainViewport = () => {
     }
   };
 
-  // Function to sync mesh transforms with building data
+  // Function to sync mesh transforms with building data (for move gizmo)
   const syncMeshWithBuilding = () => {
     if (!selectedBuildingId || !gizmoManagerRef.current) return;
 
@@ -336,19 +354,15 @@ const MainViewport = () => {
       rotation: buildingMesh.rotation.y,
     };
 
-    // For scaling, we need to handle differently based on mesh type
-    // This is simplified, you might need to adjust based on your mesh structure
-    if (buildingMesh.scaling) {
-      updatedBuilding.width = building.width * buildingMesh.scaling.x;
-      updatedBuilding.length = building.length * buildingMesh.scaling.z;
-    }
-
     updateBuilding(selectedBuildingId, updatedBuilding);
   };
 
-  // Enable translation gizmo
-  const enableTranslateGizmo = () => {
-    if (!gizmoManagerRef.current) return;
+  // Enable move gizmo (position only)
+  const enableMoveGizmo = () => {
+    if (!gizmoManagerRef.current || !buildingEditorRef.current) return;
+
+    // Detach editor
+    buildingEditorRef.current.detach();
 
     // Disable all gizmos first
     gizmoManagerRef.current.positionGizmoEnabled = false;
@@ -371,95 +385,29 @@ const MainViewport = () => {
       });
     }
 
-    currentGizmoMode.current = 'translate';
+    currentEditorMode.current = 'move';
   };
 
-  // Enable rotation gizmo - replace with a Y-axis-only rotation gizmo
-  const enableRotateGizmo = () => {
-    if (!gizmoManagerRef.current || !utilityLayerRef.current) return;
+  // Enable custom building editor
+  const enableBuildingEditor = () => {
+    if (!buildingEditorRef.current || !gizmoManagerRef.current || !selectedBuildingId) return;
 
-    // Disable all existing gizmos first
+    // Disable all standard gizmos
     gizmoManagerRef.current.positionGizmoEnabled = false;
     gizmoManagerRef.current.rotationGizmoEnabled = false;
     gizmoManagerRef.current.scaleGizmoEnabled = false;
+    gizmoManagerRef.current.attachToMesh(null);
 
-    // Clean up any existing plane rotation gizmo
-    if (planeRotationGizmoRef.current) {
-      planeRotationGizmoRef.current.dispose();
-    }
-
-    // Get the selected mesh
-    if (!selectedBuildingId) return;
+    // Find the selected building data and mesh
+    const building = buildings.find(b => b.id === selectedBuildingId);
     const buildingMesh = buildingMeshesRef.current.get(selectedBuildingId);
-    if (!buildingMesh) return;
 
-    // Create a new PlaneRotationGizmo that only rotates around the Y-axis
-    const planeRotationGizmo = new PlaneRotationGizmo(
-      new Vector3(0, 1, 0), // Y-axis normal vector
-      new Color3(0, 1, 0),  // Green color
-      utilityLayerRef.current
-    );
-
-    // Attach to the selected mesh
-    planeRotationGizmo.attachedMesh = buildingMesh;
-
-    // Store the gizmo for later cleanup
-    planeRotationGizmoRef.current = planeRotationGizmo;
-
-    // Add observer for drag end
-    planeRotationGizmo.dragBehavior.onDragEndObservable.add(() => {
-      syncMeshWithBuilding();
-    });
-
-    currentGizmoMode.current = 'rotate';
-  };
-
-  // Enable scale gizmo
-  const enableScaleGizmo = () => {
-    if (!gizmoManagerRef.current) return;
-
-    // Disable all gizmos first
-    gizmoManagerRef.current.positionGizmoEnabled = false;
-    gizmoManagerRef.current.rotationGizmoEnabled = false;
-    gizmoManagerRef.current.scaleGizmoEnabled = false;
-
-    // Enable scale gizmo
-    gizmoManagerRef.current.scaleGizmoEnabled = true;
-
-    // Set up observers for transformation changes
-    if (gizmoManagerRef.current.gizmos.scaleGizmo) {
-      // Remove any existing observers
-      if (gizmoManagerRef.current.gizmos.scaleGizmo.onDragEndObservable.hasObservers()) {
-        gizmoManagerRef.current.gizmos.scaleGizmo.onDragEndObservable.clear();
-      }
-
-      // Add new observer
-      gizmoManagerRef.current.gizmos.scaleGizmo.onDragEndObservable.add(() => {
-        syncMeshWithBuilding();
-      });
+    if (building && buildingMesh) {
+      // Attach our custom editor
+      buildingEditorRef.current.attach(building, buildingMesh);
     }
 
-    currentGizmoMode.current = 'scale';
-  };
-
-  // Render info about key controls and gizmo buttons
-  const renderControlsInfo = () => {
-    return (
-      <div style={{
-        position: 'absolute',
-        bottom: '10px',
-        right: '10px',
-        backgroundColor: 'rgba(0,0,0,0.7)',
-        color: 'white',
-        padding: '5px 10px',
-        borderRadius: '4px',
-        fontSize: '14px',
-      }}>
-        <div>Press <b>E</b> to rotate counter-clockwise</div>
-        <div>Press <b>R</b> to rotate clockwise</div>
-        <div>Use gizmo controls for direct manipulation</div>
-      </div>
-    );
+    currentEditorMode.current = 'edit';
   };
 
   return (
@@ -519,11 +467,11 @@ const MainViewport = () => {
           gap: '0.5rem'
         }}>
           <button
-            onClick={enableTranslateGizmo}
+            onClick={enableMoveGizmo}
             style={{
               padding: '0.5rem 1rem',
-              backgroundColor: currentGizmoMode.current === 'translate' ? '#2196f3' : '#e0e0e0',
-              color: currentGizmoMode.current === 'translate' ? 'white' : 'black',
+              backgroundColor: currentEditorMode.current === 'move' ? '#2196f3' : '#e0e0e0',
+              color: currentEditorMode.current === 'move' ? 'white' : 'black',
               border: 'none',
               borderRadius: '4px',
               cursor: 'pointer',
@@ -532,30 +480,17 @@ const MainViewport = () => {
             Move
           </button>
           <button
-            onClick={enableRotateGizmo}
+            onClick={enableBuildingEditor}
             style={{
               padding: '0.5rem 1rem',
-              backgroundColor: currentGizmoMode.current === 'rotate' ? '#2196f3' : '#e0e0e0',
-              color: currentGizmoMode.current === 'rotate' ? 'white' : 'black',
+              backgroundColor: currentEditorMode.current === 'edit' ? '#2196f3' : '#e0e0e0',
+              color: currentEditorMode.current === 'edit' ? 'white' : 'black',
               border: 'none',
               borderRadius: '4px',
               cursor: 'pointer',
             }}
           >
-            Rotate
-          </button>
-          <button
-            onClick={enableScaleGizmo}
-            style={{
-              padding: '0.5rem 1rem',
-              backgroundColor: currentGizmoMode.current === 'scale' ? '#2196f3' : '#e0e0e0',
-              color: currentGizmoMode.current === 'scale' ? 'white' : 'black',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            Scale
+            Edit Size & Rotation
           </button>
         </div>
       )}
@@ -603,7 +538,6 @@ const MainViewport = () => {
             Click to place {currentRoofType === 'flat' ? 'Flat' : 'Dual Pitch'} Roof
           </div>
         )}
-        {selectedBuildingId && renderControlsInfo()}
       </div>
     </div>
   );
