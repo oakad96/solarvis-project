@@ -92,4 +92,4 @@ export const RoofBuilderProvider = ({ children }: RoofBuilderProviderProps) => {
       {children}
     </RoofBuilderContext.Provider>
   );
-}; 
+};

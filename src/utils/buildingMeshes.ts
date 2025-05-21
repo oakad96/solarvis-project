@@ -249,4 +249,4 @@ export const createControlPointsMesh = (scene: Scene, building: Building): Mesh[
   });
 
   return controlPoints;
-}; 
+};

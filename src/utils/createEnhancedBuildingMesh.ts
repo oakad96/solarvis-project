@@ -64,7 +64,7 @@ export const createEnhancedBuildingMesh = (scene: Scene, building: Building): Me
     roof.position.y = building.height + 0.1;
     roof.parent = parentMesh;
 
-    // Create roof PBR material 
+    // Create roof PBR material
     const roofMaterial = new PBRMaterial(`roof-material-${building.id}`, scene);
     roofMaterial.albedoColor = new Color3(0.15, 0.15, 0.15);
     roofMaterial.metallic = 0.2;
@@ -183,4 +183,4 @@ export const createEnhancedBuildingMesh = (scene: Scene, building: Building): Me
   }
 
   return parentMesh;
-}; 
+};

@@ -66,4 +66,4 @@ export const useBabylonEngine = (): BabylonEngine => {
     canvas: canvasRef.current,
     canvasRef
   };
-}; 
+};

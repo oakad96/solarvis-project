@@ -70,4 +70,4 @@ export const useBuildingsRenderer = (props: BuildingsRendererProps): Map<string,
   }, [scene, buildings, selectedBuildingId, shadowGenerator]);
 
   return buildingMeshesRef.current;
-}; 
+};

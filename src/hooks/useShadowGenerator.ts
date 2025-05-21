@@ -23,4 +23,4 @@ export const useShadowGenerator = (scene: Scene | null): ShadowGenerator | null 
   }, [scene]);
 
   return shadowGenerator;
-}; 
+};
