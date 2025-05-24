@@ -232,7 +232,7 @@ export class BuildingEditor {
     ];
 
     cornerPositions.forEach(pos => {
-      const corner = this._createControlPoint(pos.id, 0.25, new Color3(0.2, 0.6, 1));
+      const corner = this._createControlPoint(pos.id, 0.25, new Color3(0, 0.8, 1)); // Bright cyan
       corner.position = new Vector3(pos.x, 0.1, pos.z);
 
       // Store the original position
@@ -331,7 +331,7 @@ export class BuildingEditor {
     ];
 
     edgePositions.forEach(pos => {
-      const edge = this._createControlPoint(pos.id, 0.2, new Color3(0.6, 0.8, 1));
+      const edge = this._createControlPoint(pos.id, 0.2, new Color3(1, 0.4, 0)); // Bright orange
       edge.position = new Vector3(pos.x, 0.1, pos.z);
 
       // Store metadata
@@ -428,16 +428,19 @@ export class BuildingEditor {
       "rotationHandleMaterial", 
       this._utilityLayer.utilityLayerScene
     );
-    handleMaterial.diffuseColor = new Color3(1, 0.8, 0.1);
-    handleMaterial.emissiveColor = new Color3(0.5, 0.4, 0);
+    handleMaterial.diffuseColor = new Color3(1, 0.1, 0.8); // Bright magenta
+    handleMaterial.emissiveColor = new Color3(0.5, 0.05, 0.4);
     this._rotationHandle.material = handleMaterial;
 
-    // Create parent for rotation handle positioning
+    // Create parent for rotation handle - positioned at building center
     this._rotationHandleParent = new TransformNode("rotationHandleParent", this._utilityLayer.utilityLayerScene);
-    this._rotationHandleParent.parent = this._rootNode;
 
-    this._rotationHandle.position.y = 0.1;
+    // Set handle at fixed offset from parent
+    this._rotationHandle.position.set(0, 0.1, -2.0); // 2 units forward from parent
     this._rotationHandle.parent = this._rotationHandleParent;
+
+    // Initially hide the rotation handle parent (will be shown when attached)
+    this._rotationHandleParent.setEnabled(false);
 
     // Add drag behavior for rotation
     const dragBehavior = new PointerDragBehavior({
@@ -448,7 +451,8 @@ export class BuildingEditor {
       if (this._building && this._targetMesh) {
         this._rotationHandle!.metadata = {
           initialRotation: this._building.rotation || 0,
-          meshCenter: this._targetMesh.getAbsolutePosition()
+          meshCenter: this._targetMesh.getAbsolutePosition(),
+          isDragging: false
         };
       }
     });
@@ -459,17 +463,18 @@ export class BuildingEditor {
       const meshCenter = this._rotationHandle.metadata.meshCenter;
       const dragPoint = event.dragPlanePoint;
 
-      // Calculate angle using atan2
+      // Calculate current angle from mesh center to drag point
       const dragVector = dragPoint.subtract(meshCenter);
-      const angle = Math.atan2(dragVector.x, dragVector.z);
+      const currentAngle = Math.atan2(dragVector.x, dragVector.z);
 
-      // Store initial angle on first drag
-      if (!this._rotationHandle.metadata.hasOwnProperty('initialAngle')) {
-        this._rotationHandle.metadata.initialAngle = angle;
+      // On first drag, store the initial drag angle
+      if (!this._rotationHandle.metadata.isDragging) {
+        this._rotationHandle.metadata.initialDragAngle = currentAngle;
+        this._rotationHandle.metadata.isDragging = true;
       }
 
-      // Calculate rotation difference
-      const angleDiff = angle - this._rotationHandle.metadata.initialAngle;
+      // Calculate rotation difference from initial drag angle
+      const angleDiff = currentAngle - this._rotationHandle.metadata.initialDragAngle;
       const newRotation = this._rotationHandle.metadata.initialRotation + angleDiff;
 
       // Update rotation
@@ -477,6 +482,10 @@ export class BuildingEditor {
     });
 
     dragBehavior.onDragEndObservable.add(() => {
+      // Reset dragging state
+      if (this._rotationHandle && this._rotationHandle.metadata) {
+        this._rotationHandle.metadata.isDragging = false;
+      }
       this._notifyBuildingModified();
     });
 
@@ -506,8 +515,8 @@ export class BuildingEditor {
       "dragHandleMaterial",
       this._utilityLayer.utilityLayerScene
     );
-    handleMaterial.diffuseColor = new Color3(0.3, 0.7, 1);
-    handleMaterial.alpha = 0.2;
+    handleMaterial.diffuseColor = new Color3(0.2, 1, 0.3); // Bright green
+    handleMaterial.alpha = 0.3;
     this._dragHandle.material = handleMaterial;
 
     this._dragHandle.parent = this._rootNode;
@@ -698,7 +707,6 @@ export class BuildingEditor {
     this._rootNode.rotation.y = this._targetMesh.rotation.y;
 
     // Update corner control positions using scaling
-    const halfLength = this._building.length / 2;
 
     this._cornerControls.forEach(corner => {
       const originalPos = corner.metadata.originalPosition;
@@ -720,10 +728,17 @@ export class BuildingEditor {
       }
     });
 
-    // Update rotation handle position
-    if (this._rotationHandleParent) {
-      // Keep handle at fixed offset from top edge
-      this._rotationHandleParent.position.set(0, 0, -halfLength - 0.5);
+    // Update rotation handle position - position relative to bottom edge control
+    if (this._rotationHandleParent && this._targetMesh) {
+      // Position parent at building center
+      this._rotationHandleParent.position.copyFrom(this._targetMesh.position);
+      // Match building rotation
+      this._rotationHandleParent.rotation.y = this._building.rotation || 0;
+
+      // Position handle relative to top edge control
+      const topEdgeZ = -0.5 * this._building.length; // Top edge position
+      const handleOffset = topEdgeZ - 0.5; // Add some distance beyond the edge
+      this._rotationHandle!.position.set(0, 0.1, handleOffset);
     }
   }
 
@@ -754,6 +769,11 @@ export class BuildingEditor {
 
     // Show the editor
     this._rootNode.setEnabled(true);
+
+    // Show the rotation handle
+    if (this._rotationHandleParent) {
+      this._rotationHandleParent.setEnabled(true);
+    }
   }
 
   /**
@@ -763,6 +783,11 @@ export class BuildingEditor {
     this._building = null;
     this._targetMesh = null;
     this._rootNode.setEnabled(false);
+
+    // Hide the rotation handle
+    if (this._rotationHandleParent) {
+      this._rotationHandleParent.setEnabled(false);
+    }
   }
 
   /**
@@ -928,8 +953,8 @@ export class BuildingMoveGizmo {
       "moveHandleMaterial",
       this._utilityLayer.utilityLayerScene
     );
-    handleMaterial.diffuseColor = new Color3(0.2, 0.8, 0.4);
-    handleMaterial.emissiveColor = new Color3(0.1, 0.4, 0.2);
+    handleMaterial.diffuseColor = new Color3(0, 1, 0); // Bright green
+    handleMaterial.emissiveColor = new Color3(0, 0.5, 0);
     this._centerHandle.material = handleMaterial;
 
     this._centerHandle.parent = this._rootNode;
@@ -981,11 +1006,11 @@ export class BuildingMoveGizmo {
    * Create directional arrow handles for constrained movement
    */
   private _createArrowHandles(): void {
-    // Create X-axis arrow (red)
-    this._createArrowHandle('x', new Vector3(1, 0, 0), new Color3(1, 0.2, 0.2));
+    // Create X-axis arrow (bright red)
+    this._createArrowHandle('x', new Vector3(1, 0, 0), new Color3(1, 0, 0));
 
-    // Create Z-axis arrow (blue)
-    this._createArrowHandle('z', new Vector3(0, 0, 1), new Color3(0.2, 0.2, 1));
+    // Create Z-axis arrow (bright blue)
+    this._createArrowHandle('z', new Vector3(0, 0, 1), new Color3(0, 0, 1));
   }
 
   /**
