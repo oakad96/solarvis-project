@@ -105,83 +105,109 @@ const ElevationViewport = () => {
         padding: '10px'
       }}>
 
-        {/* Building representation - side view */}
-        <div style={{
-          width: '70%',
-          height: 'auto',
-          margin: '30px auto 20px',
-          position: 'relative'
-        }}>
-          {/* Roof */}
+        {!selectedBuilding ? (
           <div style={{
-            width: '100%',
-            height: `${visualHeight}px`,
-            backgroundColor: '#d0853a', // Roof color (orange/brown)
-            position: 'absolute',
-            top: 0,
             display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+            color: '#888',
+            fontSize: '14px',
+            textAlign: 'center'
           }}>
-            {/* Left handle */}
-            <div
-              style={{
-                width: '12px',
-                height: '12px',
-                backgroundColor: '#ffffff',
-                border: '2px solid #333',
-                borderRadius: '50%',
-                position: 'absolute',
-                left: '-6px',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                cursor: 'ns-resize',
-                zIndex: 2
-              }}
-              onMouseDown={(e) => handleHandleMouseDown(e, 'left')}
-            />
-
-            {/* Right handle */}
-            <div
-              style={{
-                width: '12px',
-                height: '12px',
-                backgroundColor: '#ffffff',
-                border: '2px solid #333',
-                borderRadius: '50%',
-                position: 'absolute',
-                right: '-6px',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                cursor: 'ns-resize',
-                zIndex: 2
-              }}
-              onMouseDown={(e) => handleHandleMouseDown(e, 'right')}
-            />
-
-            <span style={{
-              color: '#fff',
-              fontSize: '12px',
-              textShadow: '0 1px 2px rgba(0,0,0,0.6)',
-              position: 'absolute',
-              width: '100%',
-              textAlign: 'center'
-            }}>
-              Height: {Math.round(currentRidgeHeight * 100) / 100}
-            </span>
+            No building selected. Please select a building to view its elevation.
           </div>
-
-          {/* Building body */}
+        ) : selectedBuilding.type === 'flat' ? (
           <div style={{
-            width: '100%',
-            height: '100px',
-            backgroundColor: '#e0e0e0', // Building color (light grey)
-            position: 'absolute',
-            top: `${visualHeight}px`,
-            border: '1px solid #aaa',
-            borderTop: 'none',
-          }} />
-        </div>
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+            color: '#888',
+            fontSize: '14px',
+            textAlign: 'center'
+          }}>
+            Elevation is not available for flat roofs.
+          </div>
+        ) : (
+          /* Building representation - side view */
+          <div style={{
+            width: '70%',
+            height: 'auto',
+            margin: '30px auto 20px',
+            position: 'relative'
+          }}>
+            {/* Roof */}
+            <div style={{
+              width: '100%',
+              height: `${visualHeight}px`,
+              backgroundColor: '#d0853a', // Roof color (orange/brown)
+              position: 'absolute',
+              top: 0,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              {/* Left handle */}
+              <div
+                style={{
+                  width: '12px',
+                  height: '12px',
+                  backgroundColor: '#ffffff',
+                  border: '2px solid #333',
+                  borderRadius: '50%',
+                  position: 'absolute',
+                  left: '-6px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  cursor: 'ns-resize',
+                  zIndex: 2
+                }}
+                onMouseDown={(e) => handleHandleMouseDown(e, 'left')}
+              />
+
+                  {/* Right handle */}
+                  <div
+                    style={{
+                      width: '12px',
+                      height: '12px',
+                      backgroundColor: '#ffffff',
+                      border: '2px solid #333',
+                      borderRadius: '50%',
+                      position: 'absolute',
+                      right: '-6px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      cursor: 'ns-resize',
+                      zIndex: 2
+                    }}
+                    onMouseDown={(e) => handleHandleMouseDown(e, 'right')}
+                  />
+
+                  <span style={{
+                    color: '#fff',
+                    fontSize: '12px',
+                    textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+                    position: 'absolute',
+                    width: '100%',
+                    textAlign: 'center'
+                  }}>
+                    Height: {Math.round(currentRidgeHeight * 100) / 100}
+                  </span>
+                </div>
+
+                {/* Building body */}
+                <div style={{
+                  width: '100%',
+                  height: '100px',
+                  backgroundColor: '#e0e0e0', // Building color (light grey)
+                  position: 'absolute',
+                  top: `${visualHeight}px`,
+                  border: '1px solid #aaa',
+                  borderTop: 'none',
+                }} />
+              </div>
+        )}
       </div>
     </div>
   );
