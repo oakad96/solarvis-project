@@ -20,6 +20,7 @@ import { createBuildingMesh } from '../utils/buildingMeshes';
 import { setupCamera } from '../scene/setupCamera';
 import { setupGround } from '../scene/setupGround';
 import { setupGizmoManager, BuildingEditor } from '../scene/setupGizmoManager';
+import MainToolbar from './main-toolbar';
 
 const MainViewport = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -33,9 +34,7 @@ const MainViewport = () => {
     currentRoofType,
     setPlacementMode,
     addBuilding,
-    updateBuilding,
-    selectBuilding,
-    setCurrentRoofType
+    updateBuilding
   } = useRoofBuilder();
 
   // Track meshes
@@ -205,12 +204,6 @@ const MainViewport = () => {
       const buildingMesh = createBuildingMesh(sceneRef.current!, building);
       buildingMeshesRef.current.set(building.id, buildingMesh);
 
-      // Make building mesh pickable
-      buildingMesh.isPickable = true;
-      buildingMesh.getChildMeshes().forEach(child => {
-        child.isPickable = true;
-      });
-
       // Attach appropriate control to the selected building
       if (building.id === selectedBuildingId) {
         console.log("Attaching controls to selected building:", building.id);
@@ -314,25 +307,6 @@ const MainViewport = () => {
       addBuilding(newBuilding);
       setPlacementMode(false);
     }
-
-    // Select a building
-    if (!placementMode && pickResult.hit && pickResult.pickedMesh) {
-      // Check if we're clicking on a building
-      if (pickResult.pickedMesh.name.startsWith('building-') ||
-        pickResult.pickedMesh.parent?.name?.startsWith('building-parent-')) {
-        const meshId = pickResult.pickedMesh.name.startsWith('building-') 
-          ? pickResult.pickedMesh.name.substring('building-'.length)
-          : pickResult.pickedMesh.parent!.name.substring('building-parent-'.length);
-
-        console.log("Building selected:", meshId);
-        selectBuilding(meshId);
-      }
-      // Clicking on empty space deselects
-      else if (pickResult.pickedMesh.name === 'ground') {
-        console.log("Deselecting building");
-        selectBuilding(null);
-      }
-    }
   };
 
   // Function to sync mesh transforms with building data (for move gizmo)
@@ -419,81 +393,12 @@ const MainViewport = () => {
       padding: '0.5rem',
       borderRadius: '4px',
     }}>
-      <div style={{
-        marginBottom: '0.5rem',
-        display: 'flex',
-        gap: '0.5rem'
-      }}>
-        <button
-          onClick={() => {
-            setPlacementMode(true);
-            setCurrentRoofType('flat');
-            console.log("Flat roof button clicked", { placementMode: true, currentRoofType: 'flat' });
-          }}
-          style={{
-            padding: '0.5rem 1rem',
-            backgroundColor: currentRoofType === 'flat' && placementMode ? '#2196f3' : '#e0e0e0',
-            color: currentRoofType === 'flat' && placementMode ? 'white' : 'black',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          Flat Roof
-        </button>
-        <button
-          onClick={() => {
-            setPlacementMode(true);
-            setCurrentRoofType('dualPitch');
-            console.log("Dual pitch roof button clicked", { placementMode: true, currentRoofType: 'dualPitch' });
-          }}
-          style={{
-            padding: '0.5rem 1rem',
-            backgroundColor: currentRoofType === 'dualPitch' && placementMode ? '#2196f3' : '#e0e0e0',
-            color: currentRoofType === 'dualPitch' && placementMode ? 'white' : 'black',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          Dual Pitch Roof
-        </button>
-      </div>
-
-      {selectedBuildingId && (
-        <div style={{
-          marginBottom: '0.5rem',
-          display: 'flex',
-          gap: '0.5rem'
-        }}>
-          <button
-            onClick={enableMoveGizmo}
-            style={{
-              padding: '0.5rem 1rem',
-              backgroundColor: currentEditorMode.current === 'move' ? '#2196f3' : '#e0e0e0',
-              color: currentEditorMode.current === 'move' ? 'white' : 'black',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            Move
-          </button>
-          <button
-            onClick={enableBuildingEditor}
-            style={{
-              padding: '0.5rem 1rem',
-              backgroundColor: currentEditorMode.current === 'edit' ? '#2196f3' : '#e0e0e0',
-              color: currentEditorMode.current === 'edit' ? 'white' : 'black',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            Edit Size & Rotation
-          </button>
-        </div>
-      )}
+      <MainToolbar
+        selectedBuildingId={selectedBuildingId}
+        currentEditorMode={currentEditorMode}
+        onEnableMoveGizmo={enableMoveGizmo}
+        onEnableBuildingEditor={enableBuildingEditor}
+      />
 
       <div style={{ flex: 1, position: 'relative' }}>
         <canvas
