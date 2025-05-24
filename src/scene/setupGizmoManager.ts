@@ -10,7 +10,8 @@ import {
   UtilityLayerRenderer,
   TransformNode,
   Observable,
-  PointerDragBehavior
+  PointerDragBehavior,
+  Matrix
 } from '@babylonjs/core';
 import { Building } from '../store/RoofBuilderContext';
 
@@ -220,7 +221,7 @@ export class BuildingEditor {
   }
 
   /**
-   * Create corner control points
+   * Create corner control points using Babylon.js patterns
    */
   private _createCornerControls(): void {
     const cornerPositions = [
@@ -236,106 +237,79 @@ export class BuildingEditor {
 
       // Store the original position
       corner.metadata = {
-        originalPosition: new Vector3(pos.x, 0.1, pos.z),
+        originalPosition: corner.position.clone(),
         controlType: 'corner',
         cornerId: pos.id
       };
 
       // Add drag behavior
       const dragBehavior = new PointerDragBehavior({
-        dragPlaneNormal: new Vector3(0, 1, 0)
+        dragPlaneNormal: Vector3.Up()
       });
 
-      // Store reference positions when drag begins
+      // Store initial state when drag begins
       dragBehavior.onDragStartObservable.add(() => {
         if (this._building && this._targetMesh) {
           corner.metadata.initialWidth = this._building.width;
           corner.metadata.initialLength = this._building.length;
-          corner.metadata.initialCornerPositionX = corner.position.x;
-          corner.metadata.initialCornerPositionZ = corner.position.z;
-          corner.metadata.dragStartPositionX = dragBehavior.lastDragPosition.x;
-          corner.metadata.dragStartPositionZ = dragBehavior.lastDragPosition.z;
-
-          // Store mesh center position for calculations
-          corner.metadata.meshCenter = this._targetMesh.position.clone();
-
-          // Store current rotation
-          corner.metadata.initialRotation = this._building.rotation || 0;
+          corner.metadata.dragStartWorldPos = dragBehavior.lastDragPosition.clone();
+          corner.metadata.meshWorldMatrix = this._targetMesh.getWorldMatrix().clone();
         }
       });
 
-      // Use a completely different approach for rotated resizing
+      // Handle drag using Babylon's coordinate transformation utilities
       dragBehavior.onDragObservable.add((event) => {
         if (!this._building || !this._targetMesh) return;
 
-        // Calculate the current drag position relative to mesh center
-        const meshCenter = corner.metadata.meshCenter;
-        const currentDragPos = new Vector3(
-          event.dragPlanePoint.x,
-          0,
-          event.dragPlanePoint.z
-        );
+        // Get drag position in world space
+        const currentWorldPos = event.dragPlanePoint;
 
-        // Get current rotation
-        const rotation = this._building.rotation || 0;
+        // Transform to local space using Babylon's utilities
+        const meshWorldMatrix = corner.metadata.meshWorldMatrix;
+        const invWorldMatrix = Matrix.Invert(meshWorldMatrix);
 
-        // Create rotation matrix to un-rotate the drag position
-        const cosTheta = Math.cos(-rotation);
-        const sinTheta = Math.sin(-rotation);
+        // Transform drag position to local space
+        const localDragPos = Vector3.TransformCoordinates(currentWorldPos, invWorldMatrix);
 
-        // Calculate the drag point in local (unrotated) space
-        const localDragX = (currentDragPos.x - meshCenter.x) * cosTheta -
-          (currentDragPos.z - meshCenter.z) * sinTheta;
-        const localDragZ = (currentDragPos.x - meshCenter.x) * sinTheta +
-          (currentDragPos.z - meshCenter.z) * cosTheta;
+        // Get current corner position in local space
+        const cornerWorldPos = corner.getAbsolutePosition();
+        const localCornerPos = Vector3.TransformCoordinates(cornerWorldPos, invWorldMatrix);
 
-        // Get the sign for each dimension based on which corner we're dragging
-        const xDirection = pos.id.includes('Left') ? -1 : 1;
-        const zDirection = pos.id.includes('top') ? -1 : 1;
+        // Calculate new dimensions based on local positions
+        const newWidth = 2 * Math.abs(localDragPos.x);
+        const newLength = 2 * Math.abs(localDragPos.z);
 
-        // Use distance from center * 2 as the dimension
-        // If we're on the negative side of an axis, the sign will be flipped
-        const calculatedWidth = 2 * Math.abs(localDragX);
-        const calculatedLength = 2 * Math.abs(localDragZ);
+        // Determine if we're expanding or shrinking
+        const isDragXExpanding = Math.sign(localDragPos.x) === Math.sign(localCornerPos.x) &&
+          Math.abs(localDragPos.x) > Math.abs(localCornerPos.x);
+        const isDragZExpanding = Math.sign(localDragPos.z) === Math.sign(localCornerPos.z) &&
+          Math.abs(localDragPos.z) > Math.abs(localCornerPos.z);
 
-        // Determine if we should increase or decrease dimensions based on drag direction
-        const initialWidth = corner.metadata.initialWidth;
-        const initialLength = corner.metadata.initialLength;
+        // Apply appropriate sizing logic
+        let finalWidth = corner.metadata.initialWidth;
+        let finalLength = corner.metadata.initialLength;
 
-        // For each dimension:
-        // - Check if the drag point is moving outward (expanding) or inward (shrinking)
-        // - Adjust dimension accordingly
-        let newWidth = initialWidth;
-        let newLength = initialLength;
-
-        // Handle the X dimension (width)
-        // Is the drag point moving away from center?
-        if (xDirection * localDragX > 0) {
-          // Moving outward (expanding)
-          newWidth = Math.max(calculatedWidth, initialWidth);
+        if (isDragXExpanding) {
+          finalWidth = Math.max(newWidth, corner.metadata.initialWidth);
         } else {
-          // Moving inward (shrinking)
-          newWidth = Math.min(calculatedWidth, initialWidth);
+          finalWidth = newWidth;
         }
 
-        // Handle the Z dimension (length)
-        if (zDirection * localDragZ > 0) {
-          // Moving outward (expanding)
-          newLength = Math.max(calculatedLength, initialLength);
+        if (isDragZExpanding) {
+          finalLength = Math.max(newLength, corner.metadata.initialLength);
         } else {
-          // Moving inward (shrinking)
-          newLength = Math.min(calculatedLength, initialLength);
+          finalLength = newLength;
         }
 
         // Ensure minimum size
-        newWidth = Math.max(1, newWidth);
-        newLength = Math.max(1, newLength);
+        finalWidth = Math.max(1, finalWidth);
+        finalLength = Math.max(1, finalLength);
 
         // Update the building dimensions
-        this._updateBuildingDimensions(newWidth, newLength);
+        this._updateBuildingDimensions(finalWidth, finalLength);
       });
 
-      // Notify when drag ends for final update
+      // Notify when drag ends
       dragBehavior.onDragEndObservable.add(() => {
         this._notifyBuildingModified();
       });
@@ -362,7 +336,7 @@ export class BuildingEditor {
 
       // Store metadata
       edge.metadata = {
-        originalPosition: new Vector3(pos.x, 0.1, pos.z),
+        originalPosition: edge.position.clone(),
         controlType: 'edge',
         edgeId: pos.id,
         axis: pos.axis
@@ -370,91 +344,51 @@ export class BuildingEditor {
 
       // Add drag behavior
       const dragBehavior = new PointerDragBehavior({
-        dragPlaneNormal: new Vector3(0, 1, 0)
+        dragPlaneNormal: Vector3.Up()
       });
 
-      // Store reference positions when drag begins
+      // Store initial state when drag begins
       dragBehavior.onDragStartObservable.add(() => {
         if (this._building && this._targetMesh) {
           edge.metadata.initialWidth = this._building.width;
           edge.metadata.initialLength = this._building.length;
-          edge.metadata.initialEdgePositionX = edge.position.x;
-          edge.metadata.initialEdgePositionZ = edge.position.z;
-          edge.metadata.dragStartPositionX = dragBehavior.lastDragPosition.x;
-          edge.metadata.dragStartPositionZ = dragBehavior.lastDragPosition.z;
-
-          // Store mesh center position for calculations
-          edge.metadata.meshCenter = this._targetMesh.position.clone();
-
-          // Store current rotation
-          edge.metadata.initialRotation = this._building.rotation || 0;
+          edge.metadata.meshWorldMatrix = this._targetMesh.getWorldMatrix().clone();
         }
       });
 
-      // Use the same approach as corners but adapted for edges
+      // Handle drag using Babylon's coordinate transformation
       dragBehavior.onDragObservable.add((event) => {
         if (!this._building || !this._targetMesh) return;
 
-        // Calculate the current drag position relative to mesh center
-        const meshCenter = edge.metadata.meshCenter;
-        const currentDragPos = new Vector3(
-          event.dragPlanePoint.x,
-          0,
-          event.dragPlanePoint.z
-        );
+        // Transform drag position to local space
+        const currentWorldPos = event.dragPlanePoint;
+        const invWorldMatrix = Matrix.Invert(edge.metadata.meshWorldMatrix);
+        const localDragPos = Vector3.TransformCoordinates(currentWorldPos, invWorldMatrix);
 
-        // Get current rotation
-        const rotation = this._building.rotation || 0;
+        // Get edge position in local space
+        const edgeWorldPos = edge.getAbsolutePosition();
+        const localEdgePos = Vector3.TransformCoordinates(edgeWorldPos, invWorldMatrix);
 
-        // Create rotation matrix to un-rotate the drag position
-        const cosTheta = Math.cos(-rotation);
-        const sinTheta = Math.sin(-rotation);
+        let newWidth = edge.metadata.initialWidth;
+        let newLength = edge.metadata.initialLength;
 
-        // Calculate the drag point in local (unrotated) space
-        const localDragX = (currentDragPos.x - meshCenter.x) * cosTheta -
-          (currentDragPos.z - meshCenter.z) * sinTheta;
-        const localDragZ = (currentDragPos.x - meshCenter.x) * sinTheta +
-          (currentDragPos.z - meshCenter.z) * cosTheta;
-
-        const initialWidth = edge.metadata.initialWidth;
-        const initialLength = edge.metadata.initialLength;
-
-        let newWidth = initialWidth;
-        let newLength = initialLength;
-
-        // Handle resizing based on which edge is being dragged
+        // Handle resizing based on edge axis
         if (pos.axis === 'x') {
-          // Left or right edge - only change width
-          // Calculate dimension based on 2x distance from center
-          const calculatedWidth = 2 * Math.abs(localDragX);
+          // Width adjustment
+          const calculatedWidth = 2 * Math.abs(localDragPos.x);
+          const edgeSign = Math.sign(localEdgePos.x) || 1;
+          const isExpanding = Math.sign(localDragPos.x) === edgeSign &&
+            Math.abs(localDragPos.x) > Math.abs(localEdgePos.x);
 
-          // Determine direction based on which edge
-          const xDirection = pos.id === 'left' ? -1 : 1;
-
-          // Is the drag point moving away from center?
-          if (xDirection * localDragX > 0) {
-            // Moving outward (expanding)
-            newWidth = Math.max(calculatedWidth, initialWidth);
-          } else {
-            // Moving inward (shrinking)
-            newWidth = Math.min(calculatedWidth, initialWidth);
-          }
+          newWidth = isExpanding ? Math.max(calculatedWidth, edge.metadata.initialWidth) : calculatedWidth;
         } else {
-          // Top or bottom edge - only change length
-          // Calculate dimension based on 2x distance from center
-          const calculatedLength = 2 * Math.abs(localDragZ);
+          // Length adjustment
+          const calculatedLength = 2 * Math.abs(localDragPos.z);
+          const edgeSign = Math.sign(localEdgePos.z) || 1;
+          const isExpanding = Math.sign(localDragPos.z) === edgeSign &&
+            Math.abs(localDragPos.z) > Math.abs(localEdgePos.z);
 
-          // Determine direction based on which edge
-          const zDirection = pos.id === 'top' ? -1 : 1;
-
-          // Is the drag point moving away from center?
-          if (zDirection * localDragZ > 0) {
-            // Moving outward (expanding)
-            newLength = Math.max(calculatedLength, initialLength);
-          } else {
-            // Moving inward (shrinking)
-            newLength = Math.min(calculatedLength, initialLength);
-          }
+          newLength = isExpanding ? Math.max(calculatedLength, edge.metadata.initialLength) : calculatedLength;
         }
 
         // Ensure minimum size
@@ -465,7 +399,7 @@ export class BuildingEditor {
         this._updateBuildingDimensions(newWidth, newLength);
       });
 
-      // Notify when drag ends for final update
+      // Notify when drag ends
       dragBehavior.onDragEndObservable.add(() => {
         this._notifyBuildingModified();
       });
@@ -476,10 +410,10 @@ export class BuildingEditor {
   }
 
   /**
-   * Create a rotation handle
+   * Create a rotation handle using Babylon's rotation utilities
    */
   private _createRotationHandle(): void {
-    // Create the rotation handle above the top edge
+    // Create the rotation handle
     this._rotationHandle = MeshBuilder.CreateCylinder(
       "rotationHandle",
       {
@@ -498,25 +432,23 @@ export class BuildingEditor {
     handleMaterial.emissiveColor = new Color3(0.5, 0.4, 0);
     this._rotationHandle.material = handleMaterial;
 
-    // Create a fixed-position parent for the rotation handle
+    // Create parent for rotation handle positioning
     this._rotationHandleParent = new TransformNode("rotationHandleParent", this._utilityLayer.utilityLayerScene);
     this._rotationHandleParent.parent = this._rootNode;
 
-    // Position handle above the top edge
-    this._rotationHandle.position = new Vector3(0, 0.1, -0.7);
+    this._rotationHandle.position.y = 0.1;
     this._rotationHandle.parent = this._rotationHandleParent;
 
     // Add drag behavior for rotation
     const dragBehavior = new PointerDragBehavior({
-      dragPlaneNormal: new Vector3(0, 1, 0) 
+      dragPlaneNormal: Vector3.Up()
     });
 
     dragBehavior.onDragStartObservable.add(() => {
-      if (this._building && this._rotationHandle) {
-        this._rotationHandle.metadata = {
-          initialRotation: this._building.rotation,
-          initialDragPosition: dragBehavior.lastDragPosition.clone(),
-          lastAngle: 0
+      if (this._building && this._targetMesh) {
+        this._rotationHandle!.metadata = {
+          initialRotation: this._building.rotation || 0,
+          meshCenter: this._targetMesh.getAbsolutePosition()
         };
       }
     });
@@ -524,28 +456,23 @@ export class BuildingEditor {
     dragBehavior.onDragObservable.add((event) => {
       if (!this._building || !this._targetMesh || !this._rotationHandle) return;
 
-      // Calculate rotation based on drag position relative to building center
-      const centerPoint = new Vector3(0, 0, 0);
+      const meshCenter = this._rotationHandle.metadata.meshCenter;
       const dragPoint = event.dragPlanePoint;
 
-      // Get the vector from center to drag point
-      const dragVector = dragPoint.subtract(centerPoint);
-
-      // Calculate angle between original and current position
+      // Calculate angle using atan2
+      const dragVector = dragPoint.subtract(meshCenter);
       const angle = Math.atan2(dragVector.x, dragVector.z);
 
-      // If this is the first drag event, store the initial angle
+      // Store initial angle on first drag
       if (!this._rotationHandle.metadata.hasOwnProperty('initialAngle')) {
         this._rotationHandle.metadata.initialAngle = angle;
       }
 
-      // Calculate angle difference from the initial angle
+      // Calculate rotation difference
       const angleDiff = angle - this._rotationHandle.metadata.initialAngle;
-
-      // Apply the rotation difference to the initial rotation
       const newRotation = this._rotationHandle.metadata.initialRotation + angleDiff;
 
-      // Update the rotation
+      // Update rotation
       this._updateBuildingRotation(newRotation);
     });
 
@@ -570,27 +497,24 @@ export class BuildingEditor {
       this._utilityLayer.utilityLayerScene
     );
 
-    // Rotate the plane to be horizontal
+    // Rotate to horizontal
     this._dragHandle.rotation.x = Math.PI / 2;
-
-    // Position it slightly above the building to avoid z-fighting
     this._dragHandle.position.y = 0.05;
 
-    // Create material for the drag handle
+    // Create material
     const handleMaterial = new StandardMaterial(
       "dragHandleMaterial",
       this._utilityLayer.utilityLayerScene
     );
     handleMaterial.diffuseColor = new Color3(0.3, 0.7, 1);
-    handleMaterial.alpha = 0.2; // Make it semi-transparent
+    handleMaterial.alpha = 0.2;
     this._dragHandle.material = handleMaterial;
 
-    // Make the handle a child of the root node
     this._dragHandle.parent = this._rootNode;
 
-    // Add drag behavior for moving the entire building
+    // Add drag behavior
     const dragBehavior = new PointerDragBehavior({
-      dragPlaneNormal: new Vector3(0, 1, 0)
+      dragPlaneNormal: Vector3.Up()
     });
 
     dragBehavior.onDragStartObservable.add(() => {
@@ -604,27 +528,17 @@ export class BuildingEditor {
     dragBehavior.onDragObservable.add((event) => {
       if (!this._building || !this._targetMesh) return;
 
-      // Calculate the new position
-      const deltaX = event.delta.x;
-      const deltaZ = event.delta.z;
+      // Apply delta movement
+      this._targetMesh.position.addInPlace(event.delta);
 
-      // Update the target mesh position
-      this._targetMesh.position.x += deltaX;
-      this._targetMesh.position.z += deltaZ;
-
-      // Update the editor position to follow
+      // Update editor position
       this._rootNode.position.copyFrom(this._targetMesh.position);
 
-      // Update the building data
-      if (this._building.position) {
-        this._building.position.x = this._targetMesh.position.x;
-        this._building.position.z = this._targetMesh.position.z;
-      } else {
-        this._building.position = {
-          x: this._targetMesh.position.x,
-          z: this._targetMesh.position.z
-        };
-      }
+      // Update building data
+      this._building.position = {
+        x: this._targetMesh.position.x,
+        z: this._targetMesh.position.z
+      };
     });
 
     dragBehavior.onDragEndObservable.add(() => {
@@ -657,8 +571,8 @@ export class BuildingEditor {
       this._utilityLayer.utilityLayerScene
     );
     material.diffuseColor = color;
-    material.emissiveColor = color.scale(0.3); // Add glow effect
-    material.specularColor = new Color3(1, 1, 1);
+    material.emissiveColor = color.scale(0.3);
+    material.specularColor = Color3.White();
     point.material = material;
 
     point.parent = this._rootNode;
@@ -666,7 +580,7 @@ export class BuildingEditor {
   }
 
   /**
-   * Update the building dimensions
+   * Update the building dimensions using Babylon's scaling utilities
    * @param width The new width
    * @param length The new length
    */
@@ -677,75 +591,83 @@ export class BuildingEditor {
     this._building.width = width;
     this._building.length = length;
 
-    // Update the target mesh directly for immediate visual feedback
-    // Since the building mesh is a parent mesh with children, we need to update the first child
-    // which is the actual box representing the building
+    // Update the target mesh using Babylon's scaling
     const buildingBox = this._targetMesh.getChildMeshes()[0];
-    if (buildingBox) {
-      // Update the scaling of the box to match the new dimensions
-      const originalWidth = buildingBox.getBoundingInfo().boundingBox.extendSize.x * 2;
-      const originalLength = buildingBox.getBoundingInfo().boundingBox.extendSize.z * 2;
+    if (buildingBox && buildingBox.getBoundingInfo()) {
+      const bounds = buildingBox.getBoundingInfo().boundingBox;
+      const currentWidth = bounds.extendSize.x * 2 * buildingBox.scaling.x;
+      const currentLength = bounds.extendSize.z * 2 * buildingBox.scaling.z;
 
-      if (originalWidth > 0 && originalLength > 0) {
-        buildingBox.scaling.x = width / originalWidth;
-        buildingBox.scaling.z = length / originalLength;
+      if (currentWidth > 0 && currentLength > 0) {
+        // Use Babylon's scaling to resize
+        buildingBox.scaling.x *= width / currentWidth;
+        buildingBox.scaling.z *= length / currentLength;
       }
 
-      // Also update any border lines or ridge lines
-      this._targetMesh.getChildMeshes().forEach(child => {
-        if (child.name.startsWith('border-')) {
-          // Recreate the border with new dimensions
-          child.dispose();
-
-          const halfWidth = width / 2;
-          const halfLength = length / 2;
-          const borderHeight = 0.17;
-
-          const borderPoints = [
-            new Vector3(-halfWidth, borderHeight, -halfLength),
-            new Vector3(halfWidth, borderHeight, -halfLength),
-            new Vector3(halfWidth, borderHeight, halfLength),
-            new Vector3(-halfWidth, borderHeight, halfLength),
-            new Vector3(-halfWidth, borderHeight, -halfLength)
-          ];
-
-          const newBorder = MeshBuilder.CreateLines('border-' + this._building!.id, {
-            points: borderPoints,
-            updatable: true
-          }, this._utilityLayer.utilityLayerScene);
-
-          newBorder.color = new Color3(0.9, 0.9, 0.9);
-          newBorder.parent = this._targetMesh;
-        }
-
-        if (child.name.startsWith('ridge-') && this._building!.type === 'dualPitch') {
-          // Update the ridge line
-          child.dispose();
-
-          const ridgeOffset = this._building!.ridgeOffset || 0;
-          const start = new Vector3(ridgeOffset, 0.15, -length / 2);
-          const end = new Vector3(ridgeOffset, 0.15, length / 2);
-
-          const newRidgeLine = MeshBuilder.CreateLines('ridge-' + this._building!.id, {
-            points: [start, end],
-            updatable: true
-          }, this._utilityLayer.utilityLayerScene);
-
-          newRidgeLine.color = new Color3(0.9, 0.9, 0.9);
-          newRidgeLine.parent = this._targetMesh;
-        }
-      });
+      // Update borders and ridge lines
+      this._updateBuildingVisuals();
     }
 
     // Update the editor visualization
     this._updateEditorVisuals();
 
-    // Notify building modified in real-time for better responsiveness
+    // Notify building modified
     this._notifyBuildingModified();
   }
 
   /**
-   * Update the building rotation
+   * Update building visual elements (borders, ridges)
+   */
+  private _updateBuildingVisuals(): void {
+    if (!this._building || !this._targetMesh) return;
+
+    this._targetMesh.getChildMeshes().forEach(child => {
+      if (child.name.startsWith('border-')) {
+        child.dispose();
+
+        const halfWidth = this._building!.width / 2;
+        const halfLength = this._building!.length / 2;
+        const borderHeight = 0.17;
+
+        const borderPoints = [
+          new Vector3(-halfWidth, borderHeight, -halfLength),
+          new Vector3(halfWidth, borderHeight, -halfLength),
+          new Vector3(halfWidth, borderHeight, halfLength),
+          new Vector3(-halfWidth, borderHeight, halfLength),
+          new Vector3(-halfWidth, borderHeight, -halfLength)
+        ];
+
+        const newBorder = MeshBuilder.CreateLines('border-' + this._building!.id, {
+          points: borderPoints,
+          updatable: true
+        }, this._scene);
+
+        newBorder.color = new Color3(0.9, 0.9, 0.9);
+        newBorder.parent = this._targetMesh;
+      }
+
+      if (child.name.startsWith('ridge-') && this._building!.type === 'dualPitch') {
+        child.dispose();
+
+        const ridgeOffset = this._building!.ridgeOffset || 0;
+        const halfLength = this._building!.length / 2;
+
+        const ridgeLine = MeshBuilder.CreateLines('ridge-' + this._building!.id, {
+          points: [
+            new Vector3(ridgeOffset, 0.15, -halfLength),
+            new Vector3(ridgeOffset, 0.15, halfLength)
+          ],
+          updatable: true
+        }, this._scene);
+
+        ridgeLine.color = new Color3(0.9, 0.9, 0.9);
+        ridgeLine.parent = this._targetMesh;
+      }
+    });
+  }
+
+  /**
+   * Update the building rotation using Babylon's rotation methods
    * @param rotation The new rotation in radians
    */
   private _updateBuildingRotation(rotation: number): void {
@@ -754,32 +676,35 @@ export class BuildingEditor {
     // Update the building data
     this._building.rotation = rotation;
 
-    // Update the target mesh rotation directly for immediate visual feedback
+    // Update the target mesh rotation using Babylon's Y-axis rotation
     this._targetMesh.rotation.y = rotation;
   }
 
   /**
-   * Update the visual representation of the editor
+   * Update the visual representation of the editor using Babylon's transform utilities
    */
   private _updateEditorVisuals(): void {
     if (!this._building || !this._targetMesh) return;
 
-    // Update the bounding box size
-    this._boundingBox.scaling.x = this._building.width;
-    this._boundingBox.scaling.z = this._building.length;
+    // Update bounding box using Babylon's scaling
+    this._boundingBox.scaling.set(
+      this._building.width,
+      1,
+      this._building.length
+    );
 
-    // Update the position and rotation to match the target mesh
+    // Sync editor position and rotation with target mesh
     this._rootNode.position.copyFrom(this._targetMesh.position);
     this._rootNode.rotation.y = this._targetMesh.rotation.y;
 
-    // Update corner control positions - let the parent node handle rotation
+    // Update corner control positions using scaling
+    const halfLength = this._building.length / 2;
+
     this._cornerControls.forEach(corner => {
       const originalPos = corner.metadata.originalPosition;
-
-      // Just scale the local positions, rotation is handled by the parent node
+      // Scale positions based on current dimensions
       corner.position.x = originalPos.x * this._building!.width;
       corner.position.z = originalPos.z * this._building!.length;
-      corner.position.y = originalPos.y; // Keep original height
     });
 
     // Update edge control positions
@@ -787,30 +712,18 @@ export class BuildingEditor {
       const originalPos = edge.metadata.originalPosition;
 
       if (edge.metadata.axis === 'x') {
-        // Left or right edge
         edge.position.x = originalPos.x * this._building!.width;
         edge.position.z = 0;
       } else {
-        // Top or bottom edge
         edge.position.x = 0;
         edge.position.z = originalPos.z * this._building!.length;
       }
-
-      edge.position.y = originalPos.y; // Keep original height
     });
 
-    // Update rotation handle position - keep a fixed offset from the top edge
-    if (this._rotationHandle && this._rotationHandleParent) {
-      // Position the rotation handle's parent to stay at a fixed offset from the top edge
-      this._rotationHandleParent.position.x = 0;
-      this._rotationHandleParent.position.z = -this._building.length / 2 - 0.5;
-
-      // Keep the handle itself at a fixed height above the ground
-      this._rotationHandle.position.y = 0.1;
-
-      // Reset the local position of the handle (except for height)
-      this._rotationHandle.position.x = 0;
-      this._rotationHandle.position.z = 0;
+    // Update rotation handle position
+    if (this._rotationHandleParent) {
+      // Keep handle at fixed offset from top edge
+      this._rotationHandleParent.position.set(0, 0, -halfLength - 0.5);
     }
   }
 
@@ -856,6 +769,7 @@ export class BuildingEditor {
    * Dispose of all resources used by the editor
    */
   public dispose(): void {
+    // Dispose controls
     this._cornerControls.forEach(c => c.dispose());
     this._cornerControls = [];
 
@@ -889,33 +803,21 @@ export class BuildingEditor {
  * Sets up the gizmo manager for transforming objects in the scene
  */
 export const setupGizmoManager = (scene: Scene): GizmoManager => {
-  // Initialize Gizmo Manager for transforming buildings
+  // Initialize Gizmo Manager with disabled default gizmos
   const gizmoManager = new GizmoManager(scene);
+
+  // Disable all default gizmos - we use custom controls
   gizmoManager.positionGizmoEnabled = false;
   gizmoManager.rotationGizmoEnabled = false;
   gizmoManager.scaleGizmoEnabled = false;
   gizmoManager.usePointerToAttachGizmos = false;
 
-  // Configure gizmos to work on XZ plane
+  // Configure gizmos for 2D operation (XZ plane only)
   if (gizmoManager.gizmos.positionGizmo) {
-    // Restrict position gizmo to XZ plane
+    // Restrict to XZ plane movement
     gizmoManager.gizmos.positionGizmo.xGizmo.dragBehavior.updateDragPlane = false;
     gizmoManager.gizmos.positionGizmo.zGizmo.dragBehavior.updateDragPlane = false;
-    gizmoManager.gizmos.positionGizmo.yGizmo.isEnabled = false; // Disable Y-axis movement
-  }
-
-  if (gizmoManager.gizmos.rotationGizmo) {
-    // Disable the standard rotation gizmo entirely - we'll use our custom controls instead
-    gizmoManager.gizmos.rotationGizmo.xGizmo.isEnabled = false;
-    gizmoManager.gizmos.rotationGizmo.yGizmo.isEnabled = false;
-    gizmoManager.gizmos.rotationGizmo.zGizmo.isEnabled = false;
-  }
-
-  if (gizmoManager.gizmos.scaleGizmo) {
-    // Disable standard scale gizmo - we'll use our custom controls instead
-    gizmoManager.gizmos.scaleGizmo.xGizmo.isEnabled = false;
-    gizmoManager.gizmos.scaleGizmo.yGizmo.isEnabled = false;
-    gizmoManager.gizmos.scaleGizmo.zGizmo.isEnabled = false;
+    gizmoManager.gizmos.positionGizmo.yGizmo.isEnabled = false;
   }
 
   return gizmoManager;
