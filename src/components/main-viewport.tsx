@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import {
   Engine,
   Scene,
@@ -45,8 +45,8 @@ const MainViewport = () => {
   const buildingMoveGizmoRef = useRef<BuildingMoveGizmo | null>(null);
   const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
 
-  // Track editor mode
-  const currentEditorMode = useRef<'move' | 'edit' | null>(null);
+  // Replace the ref with state to trigger re-renders
+  const [currentEditorMode, setCurrentEditorMode] = useState<'move' | 'edit' | null>(null);
 
   // Handle pointer move event
   const handlePointerMove = useCallback((pickResult: PickingInfo) => {
@@ -287,16 +287,16 @@ const MainViewport = () => {
       if (building.id === selectedBuildingId) {
         console.log("Attaching controls to selected building:", building.id);
 
-        if (currentEditorMode.current === 'move') {
+        if (currentEditorMode === 'move') {
           // Use our custom move gizmo
           buildingMoveGizmoRef.current?.attach(building, buildingMesh);
-        } else if (currentEditorMode.current === 'edit') {
+        } else if (currentEditorMode === 'edit') {
           // Use our custom editor for resizing/rotating
           buildingEditorRef.current?.attach(building, buildingMesh);
         }
       }
     });
-  }, [buildings, selectedBuildingId]);
+  }, [buildings, selectedBuildingId, currentEditorMode]);
 
   // Update ghost building for placement mode
   useEffect(() => {
@@ -370,7 +370,7 @@ const MainViewport = () => {
       buildingMoveGizmoRef.current.attach(building, buildingMesh);
     }
 
-    currentEditorMode.current = 'move';
+    setCurrentEditorMode('move');
   };
 
   // Enable custom building editor
@@ -397,7 +397,7 @@ const MainViewport = () => {
       buildingEditorRef.current.attach(building, buildingMesh);
     }
 
-    currentEditorMode.current = 'edit';
+    setCurrentEditorMode('edit');
   };
 
   return (

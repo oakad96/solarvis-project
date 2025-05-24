@@ -41,7 +41,7 @@ const DeleteIcon = () => (
 
 interface MainToolbarProps {
   selectedBuildingId: string | null;
-  currentEditorMode: React.MutableRefObject<'move' | 'edit' | null>;
+  currentEditorMode: 'move' | 'edit' | null;
   onEnableMoveGizmo: () => void;
   onEnableBuildingEditor: () => void;
 }
@@ -231,8 +231,8 @@ const MainToolbar = ({
             onClick={onEnableMoveGizmo}
             style={{
               padding: '0.75rem',
-              backgroundColor: currentEditorMode.current === 'move' ? '#2196f3' : '#f5f5f5',
-              color: currentEditorMode.current === 'move' ? 'white' : '#333',
+              backgroundColor: currentEditorMode === 'move' ? '#2196f3' : '#f5f5f5',
+              color: currentEditorMode === 'move' ? 'white' : '#333',
               border: '1px solid #ddd',
               borderRadius: '6px',
               cursor: 'pointer',
@@ -251,8 +251,8 @@ const MainToolbar = ({
             onClick={onEnableBuildingEditor}
             style={{
               padding: '0.75rem',
-              backgroundColor: currentEditorMode.current === 'edit' ? '#2196f3' : '#f5f5f5',
-              color: currentEditorMode.current === 'edit' ? 'white' : '#333',
+              backgroundColor: currentEditorMode === 'edit' ? '#2196f3' : '#f5f5f5',
+              color: currentEditorMode === 'edit' ? 'white' : '#333',
               border: '1px solid #ddd',
               borderRadius: '6px',
               cursor: 'pointer',
