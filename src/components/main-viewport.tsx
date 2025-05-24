@@ -19,7 +19,7 @@ import { createBuildingMesh } from '../utils/buildingMeshes';
 // Import setup functions from separate files
 import { setupCamera } from '../scene/setupCamera';
 import { setupGround } from '../scene/setupGround';
-import { setupGizmoManager, BuildingEditor, BuildingMoveGizmo } from '../scene/setupGizmoManager';
+import { setupGizmoManager, BuildingEditor, BuildingMoveGizmo } from '../scene/gizmos';
 import MainToolbar from './main-toolbar';
 
 const MainViewport = () => {
