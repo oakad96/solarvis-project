@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import {
   Engine,
   Scene,
@@ -7,8 +7,6 @@ import {
   PointerEventTypes,
   PickingInfo,
   Mesh,
-  ActionManager,
-  ExecuteCodeAction,
   GizmoManager,
   UtilityLayerRenderer
 } from '@babylonjs/core';
@@ -49,6 +47,113 @@ const MainViewport = () => {
   // Track editor mode
   const currentEditorMode = useRef<'move' | 'edit' | null>(null);
 
+  // Handle pointer move event
+  const handlePointerMove = useCallback((pickResult: PickingInfo) => {
+    if (!sceneRef.current) return;
+
+    console.log("handlePointerMove called", {
+      placementMode,
+      hasGhostBuilding: !!ghostBuildingRef.current,
+      hit: pickResult.hit,
+      pickedMeshName: pickResult.pickedMesh?.name,
+      pickedPoint: pickResult.pickedPoint
+    });
+
+    // Update ghost building position in placement mode
+    if (placementMode && ghostBuildingRef.current) {
+      if (pickResult.hit && pickResult.pickedMesh?.name === 'ground') {
+        console.log("Enabling ghost building at", pickResult.pickedPoint);
+        ghostBuildingRef.current.setEnabled(true);
+        ghostBuildingRef.current.position.x = pickResult.pickedPoint!.x;
+        ghostBuildingRef.current.position.z = pickResult.pickedPoint!.z;
+      } else {
+        console.log("Hiding ghost building - not over ground");
+        // Hide ghost building when not over ground
+        ghostBuildingRef.current.setEnabled(false);
+      }
+    }
+  }, [placementMode]);
+
+  // Handle pointer down event
+  const handlePointerDown = useCallback((pickResult: PickingInfo) => {
+    if (!sceneRef.current) return;
+
+    console.log("handlePointerDown called", {
+      placementMode,
+      currentRoofType,
+      hit: pickResult.hit,
+      pickedMeshName: pickResult.pickedMesh?.name,
+      pickedPoint: pickResult.pickedPoint
+    });
+
+    // Place a building in placement mode
+    if (placementMode && currentRoofType && pickResult.hit && pickResult.pickedMesh?.name === 'ground' && pickResult.pickedPoint) {
+      console.log("✅ All conditions met - Adding building", currentRoofType, "at position", pickResult.pickedPoint);
+
+      const position = {
+        x: pickResult.pickedPoint.x,
+        z: pickResult.pickedPoint.z
+      };
+
+      const newBuilding: Building = {
+        id: uuidv4(),
+        type: currentRoofType,
+        position,
+        rotation: 0,
+        width: 3,
+        length: 5,
+        height: 5,
+        ...(currentRoofType === 'dualPitch' ? { ridgeHeight: 1, ridgeOffset: 0 } : {})
+      };
+
+      console.log("📦 Created building object:", newBuilding);
+      addBuilding(newBuilding);
+      setPlacementMode(false);
+    } else {
+      console.log("❌ Placement conditions not met:", {
+        hasPlacementMode: !!placementMode,
+        hasCurrentRoofType: !!currentRoofType,
+        hasHit: !!pickResult.hit,
+        isGroundMesh: pickResult.pickedMesh?.name === 'ground',
+        hasPickedPoint: !!pickResult.pickedPoint
+      });
+    }
+  }, [placementMode, currentRoofType, addBuilding, setPlacementMode]);
+
+  // Set up pointer events observer
+  useEffect(() => {
+    if (!sceneRef.current) return;
+
+    console.log("🖱️ Setting up pointer observer");
+
+    const observer = sceneRef.current.onPointerObservable.add((pointerInfo) => {
+      console.log("Pointer event type:", pointerInfo.type);
+
+      const pickResult = sceneRef.current!.pick(sceneRef.current!.pointerX, sceneRef.current!.pointerY);
+      console.log("Pick result", {
+        hit: pickResult.hit,
+        pickedMeshName: pickResult.pickedMesh?.name,
+        pickedPoint: pickResult.pickedPoint
+      });
+
+      if (pointerInfo.type === PointerEventTypes.POINTERMOVE) {
+        handlePointerMove(pickResult);
+      } else if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
+        console.log("POINTER DOWN", {
+          placementMode,
+          currentRoofType,
+          ghostBuildingEnabled: ghostBuildingRef.current?.isEnabled()
+        });
+        handlePointerDown(pickResult);
+      }
+    });
+
+    return () => {
+      console.log("🖱️ Cleaning up pointer observer");
+      sceneRef.current?.onPointerObservable.remove(observer);
+    };
+  }, [handlePointerMove, handlePointerDown, placementMode, currentRoofType]);
+
   useEffect(() => {
     if (!canvasRef.current) return;
 
@@ -73,7 +178,7 @@ const MainViewport = () => {
     // light.intensity = 0.7;
 
     // Setup ground using the imported helper function
-    const ground = setupGround(scene);
+    setupGround(scene);
 
     // Setup gizmo manager using the imported helper function (we'll still use it for moving)
     const gizmoManager = setupGizmoManager(scene);
@@ -96,59 +201,9 @@ const MainViewport = () => {
       });
     });
 
-    // Handle pointer events for placement and selection
-    scene.onPointerObservable.add((pointerInfo) => {
-      console.log("Pointer event type:", pointerInfo.type);
+    // Pointer events will be set up in a separate useEffect
 
-      const pickResult = scene.pick(scene.pointerX, scene.pointerY);
-      console.log("Pick result", {
-        hit: pickResult.hit,
-        pickedMeshName: pickResult.pickedMesh?.name,
-        pickedPoint: pickResult.pickedPoint
-      });
-
-      if (pointerInfo.type === PointerEventTypes.POINTERMOVE) {
-        handlePointerMove(pickResult);
-      } else if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
-        console.log("POINTER DOWN", {
-          placementMode,
-          currentRoofType,
-          ghostBuildingEnabled: ghostBuildingRef.current?.isEnabled()
-        });
-        handlePointerDown(pickResult);
-      }
-    });
-
-    // Fix: Explicitly handle click event on the ground
-    ground.actionManager = new ActionManager(scene);
-    ground.actionManager.registerAction(
-      new ExecuteCodeAction(
-        ActionManager.OnPickDownTrigger,
-        () => {
-          console.log("Ground clicked directly");
-          if (placementMode && currentRoofType && ghostBuildingRef.current) {
-            const position = {
-              x: ghostBuildingRef.current.position.x,
-              z: ghostBuildingRef.current.position.z
-            };
-
-            const newBuilding: Building = {
-              id: uuidv4(),
-              type: currentRoofType,
-              position,
-              rotation: 0,
-              width: 3,
-              length: 5,
-              height: 5,
-              ...(currentRoofType === 'dualPitch' ? { ridgeHeight: 1, ridgeOffset: 0 } : {})
-            };
-
-            addBuilding(newBuilding);
-            setPlacementMode(false);
-          }
-        }
-      )
-    );
+    // Ground action manager is not needed - we handle clicks through the scene pointer observer
 
     // Start the render loop
     engine.runRenderLoop(() => {
@@ -224,16 +279,19 @@ const MainViewport = () => {
   useEffect(() => {
     if (!sceneRef.current) return;
 
-    console.log("Placement mode updated:", { placementMode, currentRoofType });
+    console.log("🔄 Ghost building useEffect triggered:", { placementMode, currentRoofType });
 
     // Dispose of existing ghost building
     if (ghostBuildingRef.current) {
+      console.log("🗑️ Disposing existing ghost building");
       ghostBuildingRef.current.dispose();
       ghostBuildingRef.current = null;
     }
 
     // Create a new ghost building if in placement mode
     if (placementMode && currentRoofType) {
+      console.log("👻 Creating new ghost building for", currentRoofType);
+
       const ghostBuilding: Building = {
         id: 'ghost',
         type: currentRoofType,
@@ -246,6 +304,7 @@ const MainViewport = () => {
       };
 
       const ghostMesh = createBuildingMesh(sceneRef.current, ghostBuilding);
+      console.log("👻 Ghost mesh created:", ghostMesh);
 
       // Make it semi-transparent
       ghostMesh.getChildMeshes().forEach(mesh => {
@@ -258,56 +317,11 @@ const MainViewport = () => {
 
       // Initially hide the ghost building
       ghostMesh.setEnabled(false);
+      console.log("👻 Ghost building created and hidden");
+    } else {
+      console.log("❌ Not creating ghost building - placementMode:", placementMode, "currentRoofType:", currentRoofType);
     }
   }, [placementMode, currentRoofType]);
-
-  // Handle pointer move event
-  const handlePointerMove = (pickResult: PickingInfo) => {
-    if (!sceneRef.current) return;
-
-    // Update ghost building position in placement mode
-    if (placementMode && ghostBuildingRef.current && pickResult.hit && pickResult.pickedMesh?.name === 'ground') {
-      ghostBuildingRef.current.setEnabled(true);
-      ghostBuildingRef.current.position.x = pickResult.pickedPoint!.x;
-      ghostBuildingRef.current.position.z = pickResult.pickedPoint!.z;
-    }
-  };
-
-  // Handle pointer down event
-  const handlePointerDown = (pickResult: PickingInfo) => {
-    if (!sceneRef.current) return;
-
-    console.log("Pointer down", {
-      placementMode,
-      currentRoofType,
-      hit: pickResult.hit,
-      pickedMeshName: pickResult.pickedMesh?.name
-    });
-
-    // Place a building in placement mode
-    if (placementMode && currentRoofType && pickResult.hit && pickResult.pickedMesh?.name === 'ground' && ghostBuildingRef.current) {
-      console.log("Adding building", currentRoofType);
-
-      const position = {
-        x: ghostBuildingRef.current.position.x,
-        z: ghostBuildingRef.current.position.z
-      };
-
-      const newBuilding: Building = {
-        id: uuidv4(),
-        type: currentRoofType,
-        position,
-        rotation: 0,
-        width: 3,
-        length: 5,
-        height: 5,
-        ...(currentRoofType === 'dualPitch' ? { ridgeHeight: 1, ridgeOffset: 0 } : {})
-      };
-
-      addBuilding(newBuilding);
-      setPlacementMode(false);
-    }
-  };
 
   // Function to sync mesh transforms with building data (for move gizmo)
   const syncMeshWithBuilding = () => {
@@ -404,30 +418,6 @@ const MainViewport = () => {
         <canvas
           ref={canvasRef}
           style={{ width: '100%', height: '100%' }}
-          onClick={() => {
-            if (placementMode && currentRoofType && sceneRef.current && ghostBuildingRef.current) {
-              console.log("Canvas clicked in placement mode", { currentRoofType });
-
-              const position = {
-                x: ghostBuildingRef.current.position.x,
-                z: ghostBuildingRef.current.position.z
-              };
-
-              const newBuilding: Building = {
-                id: uuidv4(),
-                type: currentRoofType,
-                position,
-                rotation: 0,
-                width: 3,
-                length: 5,
-                height: 5,
-                ...(currentRoofType === 'dualPitch' ? { ridgeHeight: 1, ridgeOffset: 0 } : {})
-              };
-
-              addBuilding(newBuilding);
-              setPlacementMode(false);
-            }
-          }}
         />
         {placementMode && (
           <div style={{
