@@ -17,7 +17,7 @@ import { createBuildingMesh } from '../utils/buildingMeshes';
 // Import setup functions from separate files
 import { setupCamera } from '../scene/setupCamera';
 import { setupGround } from '../scene/setupGround';
-import { setupGizmoManager, BuildingEditor } from '../scene/setupGizmoManager';
+import { setupGizmoManager, BuildingEditor, BuildingMoveGizmo } from '../scene/setupGizmoManager';
 import MainToolbar from './main-toolbar';
 
 const MainViewport = () => {
@@ -42,6 +42,7 @@ const MainViewport = () => {
 
   // Replace the rotation gizmo ref with our new building editor ref
   const buildingEditorRef = useRef<BuildingEditor | null>(null);
+  const buildingMoveGizmoRef = useRef<BuildingMoveGizmo | null>(null);
   const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
 
   // Track editor mode
@@ -201,6 +202,19 @@ const MainViewport = () => {
       });
     });
 
+    // Create our custom move gizmo
+    const buildingMoveGizmo = new BuildingMoveGizmo(scene);
+    buildingMoveGizmoRef.current = buildingMoveGizmo;
+
+    // Set up observer to update building data when move gizmo modifies it
+    buildingMoveGizmo.onBuildingMovedObservable.add((movedBuilding) => {
+      // Create a shallow copy of the building to ensure React detects the change
+      updateBuilding(movedBuilding.id, {
+        ...movedBuilding,
+        position: { ...movedBuilding.position }
+      });
+    });
+
     // Pointer events will be set up in a separate useEffect
 
     // Ground action manager is not needed - we handle clicks through the scene pointer observer
@@ -226,6 +240,11 @@ const MainViewport = () => {
         buildingEditorRef.current = null;
       }
 
+      if (buildingMoveGizmoRef.current) {
+        buildingMoveGizmoRef.current.dispose();
+        buildingMoveGizmoRef.current = null;
+      }
+
       engine.dispose();
     };
   }, []);
@@ -248,7 +267,12 @@ const MainViewport = () => {
       buildingEditorRef.current.detach();
     }
 
-    // Detach gizmo from any previously selected mesh (for move mode)
+    // Detach move gizmo from any previously selected mesh
+    if (buildingMoveGizmoRef.current) {
+      buildingMoveGizmoRef.current.detach();
+    }
+
+    // Detach native gizmo from any previously selected mesh (we'll remove this later)
     if (gizmoManagerRef.current) {
       gizmoManagerRef.current.attachToMesh(null);
     }
@@ -264,9 +288,8 @@ const MainViewport = () => {
         console.log("Attaching controls to selected building:", building.id);
 
         if (currentEditorMode.current === 'move') {
-          // Use position gizmo for moving
-          gizmoManagerRef.current?.attachToMesh(buildingMesh);
-          enableMoveGizmo();
+          // Use our custom move gizmo
+          buildingMoveGizmoRef.current?.attach(building, buildingMesh);
         } else if (currentEditorMode.current === 'edit') {
           // Use our custom editor for resizing/rotating
           buildingEditorRef.current?.attach(building, buildingMesh);
@@ -323,54 +346,28 @@ const MainViewport = () => {
     }
   }, [placementMode, currentRoofType]);
 
-  // Function to sync mesh transforms with building data (for move gizmo)
-  const syncMeshWithBuilding = () => {
-    if (!selectedBuildingId || !gizmoManagerRef.current) return;
-
-    const buildingMesh = buildingMeshesRef.current.get(selectedBuildingId);
-    if (!buildingMesh) return;
-
-    const building = buildings.find(b => b.id === selectedBuildingId);
-    if (!building) return;
-
-    // Update building data based on mesh position
-    const updatedBuilding: Partial<Building> = {
-      position: {
-        x: buildingMesh.position.x,
-        z: buildingMesh.position.z
-      },
-      rotation: buildingMesh.rotation.y,
-    };
-
-    updateBuilding(selectedBuildingId, updatedBuilding);
-  };
-
-  // Enable move gizmo (position only)
+  // Enable move gizmo
   const enableMoveGizmo = () => {
-    if (!gizmoManagerRef.current || !buildingEditorRef.current) return;
+    if (!buildingMoveGizmoRef.current || !buildingEditorRef.current || !selectedBuildingId) return;
 
     // Detach editor
     buildingEditorRef.current.detach();
 
-    // Disable all gizmos first
-    gizmoManagerRef.current.positionGizmoEnabled = false;
-    gizmoManagerRef.current.rotationGizmoEnabled = false;
-    gizmoManagerRef.current.scaleGizmoEnabled = false;
+    // Disable all native gizmos
+    if (gizmoManagerRef.current) {
+      gizmoManagerRef.current.positionGizmoEnabled = false;
+      gizmoManagerRef.current.rotationGizmoEnabled = false;
+      gizmoManagerRef.current.scaleGizmoEnabled = false;
+      gizmoManagerRef.current.attachToMesh(null);
+    }
 
-    // Enable position gizmo
-    gizmoManagerRef.current.positionGizmoEnabled = true;
+    // Find the selected building data and mesh
+    const building = buildings.find(b => b.id === selectedBuildingId);
+    const buildingMesh = buildingMeshesRef.current.get(selectedBuildingId);
 
-    // Set up observers for transformation changes
-    if (gizmoManagerRef.current.gizmos.positionGizmo) {
-      // Remove any existing observers
-      if (gizmoManagerRef.current.gizmos.positionGizmo.onDragEndObservable.hasObservers()) {
-        gizmoManagerRef.current.gizmos.positionGizmo.onDragEndObservable.clear();
-      }
-
-      // Add new observer
-      gizmoManagerRef.current.gizmos.positionGizmo.onDragEndObservable.add(() => {
-        syncMeshWithBuilding();
-      });
+    if (building && buildingMesh) {
+      // Attach our custom move gizmo
+      buildingMoveGizmoRef.current.attach(building, buildingMesh);
     }
 
     currentEditorMode.current = 'move';
@@ -378,13 +375,18 @@ const MainViewport = () => {
 
   // Enable custom building editor
   const enableBuildingEditor = () => {
-    if (!buildingEditorRef.current || !gizmoManagerRef.current || !selectedBuildingId) return;
+    if (!buildingEditorRef.current || !buildingMoveGizmoRef.current || !selectedBuildingId) return;
+
+    // Detach move gizmo
+    buildingMoveGizmoRef.current.detach();
 
     // Disable all standard gizmos
-    gizmoManagerRef.current.positionGizmoEnabled = false;
-    gizmoManagerRef.current.rotationGizmoEnabled = false;
-    gizmoManagerRef.current.scaleGizmoEnabled = false;
-    gizmoManagerRef.current.attachToMesh(null);
+    if (gizmoManagerRef.current) {
+      gizmoManagerRef.current.positionGizmoEnabled = false;
+      gizmoManagerRef.current.rotationGizmoEnabled = false;
+      gizmoManagerRef.current.scaleGizmoEnabled = false;
+      gizmoManagerRef.current.attachToMesh(null);
+    }
 
     // Find the selected building data and mesh
     const building = buildings.find(b => b.id === selectedBuildingId);

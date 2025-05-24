@@ -800,6 +800,446 @@ export class BuildingEditor {
 }
 
 /**
+ * Custom move gizmo for buildings with visual handles
+ */
+export class BuildingMoveGizmo {
+  /**
+   * The scene where the gizmo will be created
+   */
+  private _scene: Scene;
+
+  /**
+   * Reference to the utility layer for visualization
+   */
+  private _utilityLayer: UtilityLayerRenderer;
+
+  /**
+   * The building currently being moved
+   */
+  private _building: Building | null = null;
+
+  /**
+   * The mesh being moved
+   */
+  private _targetMesh: Mesh | null = null;
+
+  /**
+   * The root node that holds all gizmo controls
+   */
+  private _rootNode: TransformNode;
+
+  /**
+   * The main move handle (center cross)
+   */
+  private _centerHandle: Mesh | null = null;
+
+  /**
+   * Directional arrow handles for constrained movement
+   */
+  private _arrowHandles: {
+    x: { arrow: Mesh; shaft: Mesh } | null;
+    z: { arrow: Mesh; shaft: Mesh } | null;
+  } = { x: null, z: null };
+
+  /**
+   * Visual guide lines
+   */
+  private _guideLines: Mesh[] = [];
+
+  /**
+   * Observable that fires when the building is moved
+   */
+  public onBuildingMovedObservable = new Observable<Building>();
+
+  /**
+   * Creates a new BuildingMoveGizmo
+   * @param scene The scene to add the gizmo to
+   */
+  constructor(scene: Scene) {
+    this._scene = scene;
+
+    // Create a utility layer for the gizmo controls
+    this._utilityLayer = new UtilityLayerRenderer(scene);
+    this._utilityLayer.utilityLayerScene.autoClearDepthAndStencil = false;
+
+    // Create the root node
+    this._rootNode = new TransformNode("buildingMoveGizmoRoot", this._utilityLayer.utilityLayerScene);
+
+    // Create the gizmo controls
+    this._createControls();
+
+    // Hide the gizmo until it's attached to a mesh
+    this._rootNode.setEnabled(false);
+  }
+
+  /**
+   * Create all the control handles
+   */
+  private _createControls(): void {
+    // Create center handle for free movement
+    this._createCenterHandle();
+
+    // Create directional arrows for constrained movement
+    this._createArrowHandles();
+
+    // Create guide lines
+    this._createGuideLines();
+  }
+
+  /**
+   * Create the center handle for free XZ movement
+   */
+  private _createCenterHandle(): void {
+    // Create a cross shape for the center handle
+    const size = 0.8;
+    const thickness = 0.15;
+
+    // Create horizontal bar
+    const horizontalBar = MeshBuilder.CreateBox(
+      "centerHandleH",
+      { width: size, height: thickness, depth: thickness },
+      this._utilityLayer.utilityLayerScene
+    );
+
+    // Create vertical bar
+    const verticalBar = MeshBuilder.CreateBox(
+      "centerHandleV",
+      { width: thickness, height: thickness, depth: size },
+      this._utilityLayer.utilityLayerScene
+    );
+
+    // Merge into single mesh
+    this._centerHandle = Mesh.MergeMeshes(
+      [horizontalBar, verticalBar],
+      true,
+      false,
+      undefined,
+      false,
+      true
+    );
+
+    if (!this._centerHandle) return;
+
+    this._centerHandle.name = "centerHandle";
+    this._centerHandle.position.y = 0.1;
+
+    // Create material
+    const handleMaterial = new StandardMaterial(
+      "moveHandleMaterial",
+      this._utilityLayer.utilityLayerScene
+    );
+    handleMaterial.diffuseColor = new Color3(0.2, 0.8, 0.4);
+    handleMaterial.emissiveColor = new Color3(0.1, 0.4, 0.2);
+    this._centerHandle.material = handleMaterial;
+
+    this._centerHandle.parent = this._rootNode;
+
+    // Add drag behavior for free movement
+    const dragBehavior = new PointerDragBehavior({
+      dragPlaneNormal: Vector3.Up()
+    });
+
+    dragBehavior.onDragStartObservable.add(() => {
+      if (this._building && this._targetMesh) {
+        this._centerHandle!.metadata = {
+          initialPosition: this._targetMesh.position.clone()
+        };
+        // Show guide lines
+        this._guideLines.forEach(line => line.setEnabled(true));
+      }
+    });
+
+    dragBehavior.onDragObservable.add((event) => {
+      if (!this._building || !this._targetMesh) return;
+
+      // Apply delta movement
+      this._targetMesh.position.addInPlace(event.delta);
+
+      // Update gizmo position
+      this._rootNode.position.copyFrom(this._targetMesh.position);
+
+      // Update guide lines
+      this._updateGuideLines();
+
+      // Update building data
+      this._building.position = {
+        x: this._targetMesh.position.x,
+        z: this._targetMesh.position.z
+      };
+    });
+
+    dragBehavior.onDragEndObservable.add(() => {
+      // Hide guide lines
+      this._guideLines.forEach(line => line.setEnabled(false));
+      this._notifyBuildingMoved();
+    });
+
+    this._centerHandle.addBehavior(dragBehavior);
+  }
+
+  /**
+   * Create directional arrow handles for constrained movement
+   */
+  private _createArrowHandles(): void {
+    // Create X-axis arrow (red)
+    this._createArrowHandle('x', new Vector3(1, 0, 0), new Color3(1, 0.2, 0.2));
+
+    // Create Z-axis arrow (blue)
+    this._createArrowHandle('z', new Vector3(0, 0, 1), new Color3(0.2, 0.2, 1));
+  }
+
+  /**
+   * Create a single arrow handle
+   */
+  private _createArrowHandle(axis: 'x' | 'z', direction: Vector3, color: Color3): void {
+    const shaftLength = 1.2;
+    const arrowSize = 0.3;
+
+    // Create shaft
+    const shaft = MeshBuilder.CreateCylinder(
+      `${axis}Shaft`,
+      {
+        height: shaftLength,
+        diameter: 0.1,
+        tessellation: 8
+      },
+      this._utilityLayer.utilityLayerScene
+    );
+
+    // Rotate and position shaft
+    if (axis === 'x') {
+      shaft.rotation.z = Math.PI / 2;
+      shaft.position.x = shaftLength / 2;
+    } else {
+      shaft.rotation.x = Math.PI / 2;
+      shaft.position.z = shaftLength / 2;
+    }
+    shaft.position.y = 0.1;
+
+    // Create arrow head
+    const arrow = MeshBuilder.CreateCylinder(
+      `${axis}Arrow`,
+      {
+        height: arrowSize,
+        diameterTop: 0,
+        diameterBottom: arrowSize,
+        tessellation: 4
+      },
+      this._utilityLayer.utilityLayerScene
+    );
+
+    // Position arrow at end of shaft
+    if (axis === 'x') {
+      arrow.rotation.z = -Math.PI / 2;
+      arrow.position.x = shaftLength + arrowSize / 2;
+    } else {
+      arrow.rotation.x = -Math.PI / 2;
+      arrow.position.z = shaftLength + arrowSize / 2;
+    }
+    arrow.position.y = 0.1;
+
+    // Create materials
+    const shaftMaterial = new StandardMaterial(
+      `${axis}ShaftMaterial`,
+      this._utilityLayer.utilityLayerScene
+    );
+    shaftMaterial.diffuseColor = color;
+    shaftMaterial.emissiveColor = color.scale(0.3);
+    shaft.material = shaftMaterial;
+
+    const arrowMaterial = new StandardMaterial(
+      `${axis}ArrowMaterial`,
+      this._utilityLayer.utilityLayerScene
+    );
+    arrowMaterial.diffuseColor = color;
+    arrowMaterial.emissiveColor = color.scale(0.5);
+    arrow.material = arrowMaterial;
+
+    // Parent to root
+    shaft.parent = this._rootNode;
+    arrow.parent = this._rootNode;
+
+    // Store references
+    this._arrowHandles[axis] = { arrow, shaft };
+
+    // Add drag behavior to both shaft and arrow
+    [shaft, arrow].forEach(mesh => {
+      const dragBehavior = new PointerDragBehavior({
+        dragPlaneNormal: Vector3.Up()
+      });
+
+      dragBehavior.onDragStartObservable.add(() => {
+        if (this._building && this._targetMesh) {
+          mesh.metadata = {
+            axis: axis,
+            initialPosition: this._targetMesh.position.clone()
+          };
+          // Show guide lines
+          this._guideLines.forEach(line => line.setEnabled(true));
+        }
+      });
+
+      dragBehavior.onDragObservable.add((event) => {
+        if (!this._building || !this._targetMesh) return;
+
+        // Constrain movement to the specific axis
+        const constrainedDelta = new Vector3(
+          axis === 'x' ? event.delta.x : 0,
+          0,
+          axis === 'z' ? event.delta.z : 0
+        );
+
+        // Apply constrained movement
+        this._targetMesh.position.addInPlace(constrainedDelta);
+
+        // Update gizmo position
+        this._rootNode.position.copyFrom(this._targetMesh.position);
+
+        // Update guide lines
+        this._updateGuideLines();
+
+        // Update building data
+        this._building.position = {
+          x: this._targetMesh.position.x,
+          z: this._targetMesh.position.z
+        };
+      });
+
+      dragBehavior.onDragEndObservable.add(() => {
+        // Hide guide lines
+        this._guideLines.forEach(line => line.setEnabled(false));
+        this._notifyBuildingMoved();
+      });
+
+      mesh.addBehavior(dragBehavior);
+    });
+  }
+
+  /**
+   * Create guide lines that show during movement
+   */
+  private _createGuideLines(): void {
+    const lineLength = 50;
+    const lineColor = new Color3(0.5, 0.5, 0.5);
+
+    // X-axis guide line
+    const xLine = MeshBuilder.CreateLines(
+      "xGuideLine",
+      {
+        points: [
+          new Vector3(-lineLength, 0.05, 0),
+          new Vector3(lineLength, 0.05, 0)
+        ],
+        updatable: true
+      },
+      this._utilityLayer.utilityLayerScene
+    );
+    xLine.color = lineColor;
+    xLine.alpha = 0.5;
+    xLine.parent = this._rootNode;
+    xLine.setEnabled(false);
+    this._guideLines.push(xLine);
+
+    // Z-axis guide line
+    const zLine = MeshBuilder.CreateLines(
+      "zGuideLine",
+      {
+        points: [
+          new Vector3(0, 0.05, -lineLength),
+          new Vector3(0, 0.05, lineLength)
+        ],
+        updatable: true
+      },
+      this._utilityLayer.utilityLayerScene
+    );
+    zLine.color = lineColor;
+    zLine.alpha = 0.5;
+    zLine.parent = this._rootNode;
+    zLine.setEnabled(false);
+    this._guideLines.push(zLine);
+  }
+
+  /**
+   * Update guide lines position
+   */
+  private _updateGuideLines(): void {
+    // Guide lines are parented to root node, so they move automatically
+  }
+
+  /**
+   * Notify that the building has been moved
+   */
+  private _notifyBuildingMoved(): void {
+    if (this._building) {
+      this.onBuildingMovedObservable.notifyObservers(this._building);
+    }
+  }
+
+  /**
+   * Attach the gizmo to a building and mesh
+   * @param building The building data to move
+   * @param mesh The mesh representation of the building
+   */
+  public attach(building: Building, mesh: Mesh): void {
+    // Detach from any previous building
+    this.detach();
+
+    // Set the new building and mesh
+    this._building = building;
+    this._targetMesh = mesh;
+
+    // Position the gizmo at the mesh location
+    this._rootNode.position.copyFrom(mesh.position);
+
+    // Show the gizmo
+    this._rootNode.setEnabled(true);
+  }
+
+  /**
+   * Detach the gizmo from the current building
+   */
+  public detach(): void {
+    this._building = null;
+    this._targetMesh = null;
+    this._rootNode.setEnabled(false);
+
+    // Hide guide lines
+    this._guideLines.forEach(line => line.setEnabled(false));
+  }
+
+  /**
+   * Dispose of all resources used by the gizmo
+   */
+  public dispose(): void {
+    // Dispose center handle
+    if (this._centerHandle) {
+      this._centerHandle.dispose();
+      this._centerHandle = null;
+    }
+
+    // Dispose arrow handles
+    if (this._arrowHandles.x) {
+      this._arrowHandles.x.arrow.dispose();
+      this._arrowHandles.x.shaft.dispose();
+      this._arrowHandles.x = null;
+    }
+    if (this._arrowHandles.z) {
+      this._arrowHandles.z.arrow.dispose();
+      this._arrowHandles.z.shaft.dispose();
+      this._arrowHandles.z = null;
+    }
+
+    // Dispose guide lines
+    this._guideLines.forEach(line => line.dispose());
+    this._guideLines = [];
+
+    this._rootNode.dispose();
+    this._utilityLayer.dispose();
+    this.onBuildingMovedObservable.clear();
+  }
+}
+
+/**
  * Sets up the gizmo manager for transforming objects in the scene
  */
 export const setupGizmoManager = (scene: Scene): GizmoManager => {
