@@ -773,4 +773,4 @@ export class BuildingEditor {
     this._utilityLayer.dispose();
     this.onBuildingModifiedObservable.clear();
   }
-} 
+}
